@@ -4,8 +4,8 @@ const supabaseUrl = 'https://hwuyvatkyyxfnyzxrcsm.supabase.co';
 const supabaseKey = 'sb_publishable_4opExcpgvIsblEQjDfqB3A_VMlCVNdG';
 const supabase = createClient(supabaseUrl, supabaseKey);
 
-
 let currentUser = null;
+let currentUserProfile = null; // FIXED: This variable is required for Settings to open
 let allTasksData = [];
 let allProjectsData = [];
 let pendingFiles = []; 
@@ -35,7 +35,12 @@ async function checkSession() {
       authSect.classList.add('hidden');
       appSect.classList.remove('hidden');
       loadAppData();
-      setupRealtime(); // START REALTIME
+      setupRealtime(); 
+      
+      // NEW: Request system notification permission
+      if (Notification.permission === 'default') {
+        Notification.requestPermission();
+      }
     }
   }
 }
@@ -57,8 +62,30 @@ document.getElementById('logout-btn').addEventListener('click', async () => {
 function setupRealtime() {
   supabase.channel('custom-all-channel')
     .on('postgres_changes', { event: '*', schema: 'public', table: 'tasks' }, fetchTasks)
-    .on('postgres_changes', { event: '*', schema: 'public', table: 'messages' }, fetchMessages)
     .on('postgres_changes', { event: '*', schema: 'public', table: 'projects' }, fetchProjects)
+    
+    // UPDATED: Intercept the message payload
+    .on('postgres_changes', { event: '*', schema: 'public', table: 'messages' }, (payload) => {
+      // 1. Refresh the UI chat log as normal
+      fetchMessages();
+      
+      // 2. If it's a brand new INSERT and notifications are allowed
+      if (payload.eventType === 'INSERT' && Notification.permission === 'granted') {
+        const newMsg = payload.new;
+        
+        // 3. Block notifications for messages you wrote yourself
+        if (newMsg.user_id !== currentUser.id) {
+          
+          // Trigger the native system notification
+          new Notification("FieldHub Project Update", {
+            body: newMsg.content,
+            icon: "https://fieldhub.uk/assets/images/favicon-transparent.png",
+            tag: "fieldhub-chat" // Prevents spamming multiple cards on screen
+          });
+          
+        }
+      }
+    })
     .subscribe();
 }
 
@@ -78,6 +105,10 @@ async function fetchProjects() {
     const options = data.map(p => `<option value="${p.id}">${p.name}</option>`).join('');
     document.getElementById('global-project-select').innerHTML = '<option value="all">All Projects</option>' + options;
     document.getElementById('task-project-select').innerHTML = options;
+    
+    // Default project dropdown for settings
+    document.getElementById('settings-default-project').innerHTML = '<option value="all">Show All Projects on Startup</option>' + options;
+    
     document.getElementById('global-project-select').value = activeGlobalProjectId;
   }
 }
@@ -100,6 +131,13 @@ async function fetchProfiles() {
     const options = data.map(p => `<option value="${p.id}">${p.full_name}</option>`).join('');
     document.getElementById('assignee-select').innerHTML = '<option value="">Unassigned</option><option value="ALL">Group Task (All)</option>' + options;
     document.getElementById('filter-user-all').innerHTML = '<option value="All">All Users</option>' + options;
+    
+    // Load Default Startup Project
+    currentUserProfile = data.find(p => p.id === currentUser.id);
+    if (currentUserProfile && currentUserProfile.default_project && activeGlobalProjectId === 'all') {
+        activeGlobalProjectId = currentUserProfile.default_project;
+        document.getElementById('global-project-select').value = activeGlobalProjectId;
+    }
   }
 }
 
@@ -117,12 +155,25 @@ async function fetchTasks() {
 window.openModal = (id) => document.getElementById(id).classList.add('active');
 window.closeModal = (id) => {
   document.getElementById(id).classList.remove('active');
+  
   if(id === 'task-modal') {
     editingTaskId = null;
     pendingFiles = [];
-    document.getElementById('image-preview-list').innerHTML = '';
+    renderPendingFiles(); // Clears UI
     document.getElementById('new-task-input').value = '';
     document.getElementById('form-title').textContent = 'Create New Task';
+  } 
+  else if (id === 'settings-modal') {
+    document.getElementById('old-password').value = '';
+    const newPw = document.getElementById('new-password');
+    newPw.value = '';
+    document.getElementById('confirm-password').value = '';
+    document.getElementById('confirm-password').disabled = true;
+    document.getElementById('update-password-btn').disabled = true;
+    document.getElementById('match-msg').textContent = '';
+    document.getElementById('settings-msg').textContent = '';
+    document.getElementById('profile-msg').textContent = '';
+    newPw.dispatchEvent(new Event('input')); // Reset red crosses
   }
 };
 
@@ -191,11 +242,52 @@ function handleFiles(files) {
   Array.from(files).forEach(file => {
     if (file.type.startsWith('image/')) {
       pendingFiles.push(file);
-      const img = document.createElement('img');
-      img.src = URL.createObjectURL(file);
-      img.style.height = '60px';
-      document.getElementById('image-preview-list').appendChild(img);
+      renderPendingFiles();
     }
+  });
+}
+
+// UPDATED: Render the images in the Add Task Modal with a Delete Button
+function renderPendingFiles() {
+  const previewList = document.getElementById('image-preview-list');
+  previewList.innerHTML = '';
+  
+  pendingFiles.forEach((file, index) => {
+    const wrapper = document.createElement('div');
+    wrapper.style.position = 'relative';
+    wrapper.style.display = 'inline-block';
+    
+    const img = document.createElement('img');
+    img.src = URL.createObjectURL(file);
+    img.style.height = '60px';
+    img.style.borderRadius = '4px';
+    img.style.border = '1px solid var(--border-color)';
+    
+    const delBtn = document.createElement('span');
+    delBtn.innerHTML = '&times;';
+    delBtn.style.position = 'absolute';
+    delBtn.style.top = '-5px';
+    delBtn.style.right = '-5px';
+    delBtn.style.background = 'var(--danger)';
+    delBtn.style.color = 'white';
+    delBtn.style.borderRadius = '50%';
+    delBtn.style.width = '18px';
+    delBtn.style.height = '18px';
+    delBtn.style.display = 'flex';
+    delBtn.style.alignItems = 'center';
+    delBtn.style.justifyContent = 'center';
+    delBtn.style.cursor = 'pointer';
+    delBtn.style.fontSize = '12px';
+    delBtn.style.fontWeight = 'bold';
+    
+    delBtn.onclick = () => {
+      pendingFiles.splice(index, 1);
+      renderPendingFiles(); // Re-render without the deleted image
+    };
+    
+    wrapper.appendChild(img);
+    wrapper.appendChild(delBtn);
+    previewList.appendChild(wrapper);
   });
 }
 
@@ -272,20 +364,15 @@ window.deleteTask = async (id) => {
     if (isAnimating) return;
     isAnimating = true;
 
-    // 1. Find the task in both lists (if it exists in both)
     const myEl = document.getElementById(`my-task-${id}`);
     const allEl = document.getElementById(`all-task-${id}`);
     const activeElements = [myEl, allEl].filter(el => el !== null);
 
-    // 2. Trigger the red slide-out animation
     activeElements.forEach(el => el.classList.add('anim-slide-out'));
 
-    // 3. Wait for the 600ms animation to finish before deleting from the database
     setTimeout(async () => {
       await supabase.from('tasks').delete().eq('id', id);
       isAnimating = false;
-      // Note: Because we set up Realtime, deleting it here will automatically
-      // trigger fetchTasks() and refresh the lists for everyone!
     }, 600);
   }
 };
@@ -335,8 +422,6 @@ async function fetchMessages() {
         const msgHtml = data.map(m => {
             const isMe = m.user_id === currentUser.id;
             const timeString = new Date(m.created_at).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' });
-            
-            // NEW: Delete button for your own messages
             const deleteBtn = isMe ? `<button class="small-btn danger-btn" style="padding: 2px 6px; margin-left: 10px;" onclick="deleteMessage('${m.id}')">X</button>` : '';
 
             return `
@@ -373,22 +458,43 @@ document.querySelectorAll('input[id^="search-"]').forEach(searchBox => {
   searchBox.addEventListener('keydown', (e) => { if (e.key === 'Escape') { searchBox.value = ''; renderTasks(); }});
 });
 
-document.getElementById('toggle-visibility-btn').addEventListener('click', () => {
-  if (isAnimating) return;
-  const btn = document.getElementById('toggle-visibility-btn');
-  if (!hideCompleted) {
-    const completedEls = document.querySelectorAll('.task-item.completed');
-    if (completedEls.length > 0) {
-      isAnimating = true;
-      completedEls.forEach(el => el.classList.add('anim-slide-out'));
-      setTimeout(() => { hideCompleted = true; btn.textContent = 'Show Completed'; isAnimating = false; renderTasks(); }, 600);
-    } else {
-      hideCompleted = true; btn.textContent = 'Show Completed'; renderTasks();
+// UPDATED: Visibility Toggle logic pointing to the new checkbox switch
+const visibilityToggle = document.getElementById('visibility-toggle');
+if (visibilityToggle) {
+  visibilityToggle.addEventListener('change', (e) => {
+    if (isAnimating) {
+      e.preventDefault(); 
+      visibilityToggle.checked = !visibilityToggle.checked; 
+      return; 
     }
-  } else {
-    hideCompleted = false; btn.textContent = 'Hide Completed'; triggerSlideInAllCompleted = true; renderTasks();
-  }
-});
+    
+    const label = document.getElementById('visibility-label');
+    const isChecked = visibilityToggle.checked;
+    
+    if (!isChecked) {
+      const completedEls = document.querySelectorAll('.task-item.completed');
+      if (completedEls.length > 0) {
+        isAnimating = true;
+        completedEls.forEach(el => el.classList.add('anim-slide-out'));
+        setTimeout(() => {
+          hideCompleted = true;
+          label.textContent = 'Hide Completed';
+          isAnimating = false;
+          renderTasks();
+        }, 600);
+      } else {
+        hideCompleted = true;
+        label.textContent = 'Hide Completed';
+        renderTasks();
+      }
+    } else {
+      hideCompleted = false;
+      label.textContent = 'Show Completed';
+      triggerSlideInAllCompleted = true;
+      renderTasks();
+    }
+  });
+}
 
 // --- RENDER LOGIC ---
 function renderTasks() {
@@ -434,6 +540,7 @@ function processList(tasks, search, priorityFilter, sortMode, userFilter) {
   return [...incomplete, ...completed];
 }
 
+// UPDATED: BuildHTML logic with action buttons moved to the right and styled as toggles
 function buildHTML(tasks, prefix) {
   if (tasks.length === 0) return '<p style="color:var(--text-muted)">No tasks found.</p>';
 
@@ -443,13 +550,10 @@ function buildHTML(tasks, prefix) {
     if (t.id === newlyAddedTaskId) animClass = 'anim-new';
     if (isCompleted && triggerSlideInAllCompleted) animClass = 'anim-slide-in';
 
-    const btnClass = isCompleted ? 'secondary-btn' : 'success-btn';
-    const btnText = isCompleted ? 'Mark Incomplete' : 'Mark Complete';
     const assigneeName = t.is_group_task ? '<span style="color:var(--primary-color)">Group Task</span>' : (t.assignee?.full_name || 'Unassigned');
     
-    // NEW: Thumbnails placed here, triggering openGallery()
     const imageHtml = t.task_attachments && t.task_attachments.length > 0 
-        ? `<div style="display:flex; gap:8px; margin: 0 15px; overflow-x: auto; max-width: 150px;">` + 
+        ? `<div style="display:flex; gap:8px; margin-top: 10px; overflow-x: auto; max-width: 150px;">` + 
           t.task_attachments.map((att, index) => 
             `<img src="${att.file_url}" onclick="openGallery('${t.id}', ${index})" style="height:40px; width:40px; object-fit:cover; cursor:pointer; border-radius:4px; border:1px solid var(--border-color); flex-shrink: 0;">`
           ).join('') + `</div>`
@@ -457,22 +561,29 @@ function buildHTML(tasks, prefix) {
 
     return `
       <div class="task-item ${isCompleted ? 'completed' : ''} ${animClass}" id="${prefix}-task-${t.id}">
-        <div class="task-header" style="display: flex; justify-content: space-between; align-items: center; width: 100%;">
+        <div class="task-header" style="display: flex; justify-content: space-between; align-items: flex-start; width: 100%;">
           
-          <div style="display:flex; align-items:center; gap:15px; flex:1;">
-            <button class="small-btn ${btnClass}" style="min-width: 130px;" onclick="toggleTaskStatus('${t.id}', '${t.status}')">${btnText}</button>
+          <div style="display:flex; flex-direction:column; flex:1;">
             <div>
               <div class="task-title" style="font-weight:bold; font-size:16px;">${t.title}</div>
               <div style="font-size:12px; color:var(--text-muted); margin-top:4px;">
                 [${t.category?.name || 'No Cat'}] • <span class="priority-${t.priority}">${t.priority}</span> • ${assigneeName}
               </div>
             </div>
+            ${imageHtml}
           </div>
 
-          ${imageHtml} <div style="display:flex; gap:5px;">
-            <button class="small-btn" onclick="editTask('${t.id}')">Edit</button>
-            <button class="small-btn danger-btn" onclick="deleteTask('${t.id}')">X</button>
+          <div style="display:flex; align-items:center; gap:15px; margin-left: 15px;">
+            <label class="switch" title="${isCompleted ? 'Mark Incomplete' : 'Mark Complete'}">
+              <input type="checkbox" ${isCompleted ? 'checked' : ''} onchange="toggleTaskStatus('${t.id}', '${t.status}', this)">
+              <span class="slider"></span>
+            </label>
+            <div style="display:flex; gap:5px; border-left: 1px solid var(--border-color); padding-left: 15px;">
+              <button class="small-btn" onclick="editTask('${t.id}')">Edit</button>
+              <button class="small-btn danger-btn" onclick="deleteTask('${t.id}')">X</button>
+            </div>
           </div>
+          
         </div>
       </div>
     `;
@@ -480,8 +591,12 @@ function buildHTML(tasks, prefix) {
 }
 
 // --- ANIMATED STATUS UPDATE ---
-window.toggleTaskStatus = async (id, currentStatus) => {
-  if (isAnimating) return;
+window.toggleTaskStatus = async (id, currentStatus, checkboxEl) => {
+  if (isAnimating) {
+    if (checkboxEl) checkboxEl.checked = !checkboxEl.checked; // Revert click if blocked
+    return;
+  }
+  
   const myEl = document.getElementById(`my-task-${id}`);
   const allEl = document.getElementById(`all-task-${id}`);
   const activeElements = [myEl, allEl].filter(el => el !== null);
@@ -499,8 +614,6 @@ window.toggleTaskStatus = async (id, currentStatus) => {
       setTimeout(() => {
         activeElements.forEach(el => {
           el.classList.remove('anim-pulse-complete'); el.classList.add('completed');
-          const btn = el.querySelector('button');
-          if(btn) { btn.className = 'small-btn secondary-btn'; btn.textContent = 'Mark Incomplete'; }
         });
         setTimeout(async () => {
           await supabase.from('tasks').update({ status: 'completed' }).eq('id', id);
@@ -512,8 +625,6 @@ window.toggleTaskStatus = async (id, currentStatus) => {
     await supabase.from('tasks').update({ status: 'pending' }).eq('id', id);
   }
 };
-
-
 
 
 window.openGallery = (taskId, startIndex) => {
@@ -549,20 +660,13 @@ window.prevGalleryImage = () => {
 
 window.deleteGalleryImage = async () => {
   if (!confirm('Are you sure you want to delete this image?')) return;
-  
   const att = currentGalleryAttachments[currentGalleryIndex];
-  
-  // 1. Extract filename from the Supabase public URL
   const urlParts = att.file_url.split('/');
   const fileName = urlParts[urlParts.length - 1];
 
-  // 2. Delete the actual file from the Storage Bucket
   await supabase.storage.from('task-images').remove([fileName]);
-
-  // 3. Delete the record from the database table
   await supabase.from('task_attachments').delete().eq('id', att.id);
 
-  // Remove from local array to prevent crash before DB refresh
   currentGalleryAttachments.splice(currentGalleryIndex, 1);
   if (currentGalleryIndex >= currentGalleryAttachments.length) currentGalleryIndex--;
   
@@ -573,9 +677,139 @@ window.deleteGalleryImage = async () => {
 window.deleteMessage = async (id) => {
   if (confirm('Delete this message?')) {
     await supabase.from('messages').delete().eq('id', id);
-    // Realtime will auto-refresh the chat list
   }
 };
 
+// --- SETTINGS & PROFILE UPDATE LOGIC ---
+document.getElementById('open-settings-btn').addEventListener('click', () => {
+  if (currentUserProfile) {
+    document.getElementById('settings-name-input').value = currentUserProfile.full_name || '';
+    document.getElementById('settings-default-project').value = currentUserProfile.default_project || 'all';
+  }
+  openModal('settings-modal');
+});
+
+document.getElementById('update-profile-btn').addEventListener('click', async () => {
+  const newName = document.getElementById('settings-name-input').value.trim();
+  const newDefaultProject = document.getElementById('settings-default-project').value;
+  const msgEl = document.getElementById('profile-msg');
+  
+  msgEl.style.color = "var(--text-main)";
+  msgEl.textContent = "Saving profile...";
+
+  const profileUpdate = { full_name: newName };
+  profileUpdate.default_project = newDefaultProject === 'all' ? null : newDefaultProject;
+  
+  const { error: profileError } = await supabase.from('profiles').update(profileUpdate).eq('id', currentUser.id);
+  
+  if (profileError) {
+    msgEl.style.color = "var(--danger)";
+    msgEl.textContent = profileError.message;
+  } else {
+    msgEl.style.color = "var(--success)";
+    msgEl.textContent = "Profile saved successfully!";
+    setTimeout(() => {
+      msgEl.textContent = '';
+      fetchProfiles(); 
+      fetchTasks();
+    }, 2000);
+  }
+});
+
+const newPwInput = document.getElementById('new-password');
+const confirmPwInput = document.getElementById('confirm-password');
+const updatePwBtn = document.getElementById('update-password-btn');
+const matchMsg = document.getElementById('match-msg');
+const settingsMsg = document.getElementById('settings-msg');
+
+const reqs = {
+  length: { el: document.getElementById('req-length'), test: (v) => v.length >= 6 },
+  cap: { el: document.getElementById('req-cap'), test: (v) => /[A-Z]/.test(v) },
+  num: { el: document.getElementById('req-num'), test: (v) => /[0-9]/.test(v) },
+  sym: { el: document.getElementById('req-sym'), test: (v) => /[@$!%*?&]/.test(v) }
+};
+
+newPwInput.addEventListener('input', (e) => {
+  const val = e.target.value;
+  let allMet = true;
+
+  Object.keys(reqs).forEach(key => {
+    const isMet = reqs[key].test(val);
+    reqs[key].el.className = isMet ? 'req-met' : 'req-unmet';
+    reqs[key].el.innerHTML = isMet ? `✅ ${reqs[key].el.innerText.substring(2)}` : `❌ ${reqs[key].el.innerText.substring(2)}`;
+    if (!isMet) allMet = false;
+  });
+
+  if (allMet) {
+    confirmPwInput.disabled = false;
+  } else {
+    confirmPwInput.disabled = true;
+    confirmPwInput.value = '';
+    matchMsg.textContent = '';
+    updatePwBtn.disabled = true;
+  }
+  checkMatch();
+});
+
+function checkMatch() {
+  if (confirmPwInput.value.length > 0) {
+    if (confirmPwInput.value === newPwInput.value) {
+      matchMsg.textContent = '✅ Passwords match';
+      matchMsg.style.color = 'var(--success)';
+      updatePwBtn.disabled = false;
+    } else {
+      matchMsg.textContent = '❌ Passwords do not match';
+      matchMsg.style.color = 'var(--danger)';
+      updatePwBtn.disabled = true;
+    }
+  } else {
+    matchMsg.textContent = '';
+    updatePwBtn.disabled = true;
+  }
+}
+confirmPwInput.addEventListener('input', checkMatch);
+
+updatePwBtn.addEventListener('click', async () => {
+  const oldPassword = document.getElementById('old-password').value;
+  const newPassword = newPwInput.value;
+  
+  if (!oldPassword) return settingsMsg.textContent = 'Please enter your current password.';
+  
+  settingsMsg.style.color = 'var(--text-main)';
+  settingsMsg.textContent = 'Verifying current password...';
+  updatePwBtn.disabled = true;
+
+  const { error: verifyError } = await supabase.auth.signInWithPassword({
+    email: currentUser.email,
+    password: oldPassword
+  });
+
+  if (verifyError) {
+    settingsMsg.style.color = 'var(--danger)';
+    settingsMsg.textContent = 'Current password is incorrect.';
+    updatePwBtn.disabled = false;
+    return;
+  }
+
+  settingsMsg.textContent = 'Updating password...';
+  const { error: updateError } = await supabase.auth.updateUser({ password: newPassword });
+
+  if (updateError) {
+    settingsMsg.style.color = 'var(--danger)';
+    settingsMsg.textContent = updateError.message;
+    updatePwBtn.disabled = false;
+  } else {
+    settingsMsg.style.color = 'var(--success)';
+    settingsMsg.textContent = 'Password updated successfully!';
+    setTimeout(() => {
+      document.getElementById('old-password').value = '';
+      newPwInput.value = '';
+      confirmPwInput.value = '';
+      newPwInput.dispatchEvent(new Event('input')); 
+      settingsMsg.textContent = '';
+      closeModal('settings-modal');
+    }, 2000);
+  }
+});
 
 checkSession();

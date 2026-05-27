@@ -27,6 +27,14 @@
     button.secondary-btn { background: var(--surface-light); color: var(--text-main); border: 1px solid var(--border-color); }
     button.success-btn { background: var(--success); color: #000; }
 
+    /* NEW: Custom Toggle Switch CSS */
+    .switch { position: relative; display: inline-block; width: 44px; height: 24px; flex-shrink: 0; margin: 0; }
+    .switch input { opacity: 0; width: 0; height: 0; }
+    .slider { position: absolute; cursor: pointer; top: 0; left: 0; right: 0; bottom: 0; background-color: #555; transition: .3s; border-radius: 24px; }
+    .slider:before { position: absolute; content: ""; height: 18px; width: 18px; left: 3px; bottom: 3px; background-color: white; transition: .3s; border-radius: 50%; }
+    input:checked + .slider { background-color: var(--success); }
+    input:checked + .slider:before { transform: translateX(20px); }
+
     .search-wrapper { position: relative; flex: 1; min-width: 200px; display: flex; align-items: center; }
     .search-wrapper input { width: 100%; margin: 0; padding-right: 35px; }
     .search-clear { position: absolute; right: 10px; background: transparent; border: none; color: var(--text-muted); font-size: 16px; padding: 0; cursor: pointer; }
@@ -43,7 +51,7 @@
     #image-upload-zone:hover, #image-upload-zone.dragover { border-color: var(--primary-color); color: var(--text-main); }
 
     .task-item { display: flex; justify-content: space-between; transition: all 0.5s ease-in-out; padding: 15px; border: 1px solid var(--border-color); border-radius: 8px; margin-bottom: 10px; background: var(--surface-light); flex-direction: column; }
-    .task-header { display: flex; justify-content: space-between; align-items: center; width: 100%; }
+    .task-header { display: flex; justify-content: space-between; align-items: flex-start; width: 100%; }
     .task-images { display: flex; gap: 10px; margin-top: 10px; overflow-x: auto; padding-bottom: 5px; }
     .task-images img { height: 60px; border-radius: 4px; cursor: pointer; border: 1px solid var(--border-color); }
     
@@ -67,6 +75,21 @@
       50% { transform: scale(1.02); box-shadow: 0 0 15px var(--success); background: var(--surface-color); } 
       100% { transform: scale(1); box-shadow: none; } 
     }
+
+    /* Password Validation Graphics */
+    #password-reqs li {
+      transition: color 0.3s ease-in-out, transform 0.2s ease;
+      margin-bottom: 5px;
+      display: flex;
+      align-items: center;
+      gap: 8px;
+    }
+    .req-unmet { color: var(--text-muted); }
+    .req-met { 
+      color: var(--success); 
+      transform: translateX(5px); 
+      font-weight: bold;
+    }
   </style>
 </head>
 <body>
@@ -79,6 +102,9 @@
     <input type="email" id="email" placeholder="Email" style="width: 100%; margin-bottom: 10px;"/>
     <input type="password" id="password" placeholder="Password" style="width: 100%; margin-bottom: 10px;"/>
     <button id="login-btn" style="width: 100%;">Login</button>
+    <p style="text-align: center; margin-top: 15px;">
+      <a href="/reset-password.html" style="color: var(--primary-color); text-decoration: none; font-size: 14px;">Forgot Password?</a>
+    </p>
   </div>
 
   <div id="app-section" class="container hidden">
@@ -91,7 +117,8 @@
         
         <button id="open-proj-modal-btn" class="secondary-btn">＋ Project</button>
         <button id="open-task-modal-btn">＋ New Task</button>
-        <button id="open-cat-modal-btn" class="secondary-btn">⚙ Categories</button>
+        <button id="open-cat-modal-btn" class="secondary-btn">🏷️ Categories</button>
+        <button id="open-settings-btn" class="secondary-btn">⚙ Settings</button>
         <button id="logout-btn" class="danger-btn">Logout</button>
       </div>
     </div>
@@ -99,7 +126,15 @@
     <h3 style="margin-bottom: 10px;">My Tasks & Group Tasks</h3>
     <div class="filters-bar">
       <div class="search-wrapper"><input type="text" id="search-my" placeholder="Search my tasks..." /><button class="search-clear" onclick="clearSearch('search-my')">✖</button></div>
-      <button id="toggle-visibility-btn" class="secondary-btn" style="margin: 0; min-width: 145px;">Hide Completed</button>
+      
+      <label style="display: flex; align-items: center; gap: 8px; cursor: pointer; color: var(--text-muted); font-size: 14px; margin: 0;">
+        <label class="switch">
+          <input type="checkbox" id="visibility-toggle" checked>
+          <span class="slider"></span>
+        </label>
+        <span id="visibility-label">Show Completed</span>
+      </label>
+
       <select id="filter-priority-my" style="margin: 0;"><option value="All">All Priorities</option><option value="High">High</option><option value="Medium">Medium</option><option value="Low">Low</option></select>
       <select id="sort-my" style="margin: 0;"><option value="newest">Newest First</option><option value="highest">Priority: High to Low</option></select>
     </div>
@@ -167,7 +202,7 @@
     </div>
   </div>
 
-<div id="gallery-modal" class="modal-overlay">
+  <div id="gallery-modal" class="modal-overlay">
     <div style="position: relative; max-width: 90vw; max-height: 90vh; display: flex; flex-direction: column; align-items: center; justify-content: center;">
       <span class="close-x" onclick="closeModal('gallery-modal')" style="color: white; right: 0; top: -40px; font-size: 30px;">&times;</span>
       
@@ -183,7 +218,45 @@
     </div>
   </div>
 
+  <div id="settings-modal" class="modal-overlay">
+    <div class="modal-content">
+      <span class="close-x" onclick="closeModal('settings-modal')">&times;</span>
+      <h3 style="margin-top:0;">Account Settings</h3>
+      
+      <div style="background: var(--surface-light); padding: 15px; border-radius: 8px; border: 1px solid var(--border-color); margin-bottom: 20px;">
+        <h4 style="margin-top:0; margin-bottom: 15px;">Profile Settings</h4>
+        
+        <label style="font-size: 14px; color: var(--text-muted);">Your Friendly Name</label>
+        <input type="text" id="settings-name-input" placeholder="Update your name..." style="width: 100%; margin-bottom: 15px; margin-top: 5px; padding: 10px;" />
+        
+        <label style="font-size: 14px; color: var(--text-muted);">Default Startup Project</label>
+        <select id="settings-default-project" style="width: 100%; margin-bottom: 15px; margin-top: 5px; padding: 10px;"></select>
+        
+        <button id="update-profile-btn" style="width: 100%;">Save Profile</button>
+        <p id="profile-msg" style="text-align: center; font-size: 14px; margin-top: 10px; margin-bottom: 0; height: 15px;"></p>
+      </div>
 
+      <div style="background: var(--surface-light); padding: 15px; border-radius: 8px; border: 1px solid var(--border-color);">
+        <h4 style="margin-top:0; margin-bottom: 15px;">Update Password</h4>
+        
+        <input type="password" id="old-password" placeholder="Current Password" style="width: 100%; margin-bottom: 10px; padding: 10px;"/>
+        <input type="password" id="new-password" placeholder="New Password" style="width: 100%; margin-bottom: 10px; padding: 10px;"/>
+        
+        <ul id="password-reqs" style="list-style: none; padding: 0; margin: 0 0 15px 5px; font-size: 13px; color: var(--text-muted);">
+          <li id="req-length" class="req-unmet">❌ Minimum 6 characters</li>
+          <li id="req-cap" class="req-unmet">❌ At least 1 uppercase letter</li>
+          <li id="req-num" class="req-unmet">❌ At least 1 number</li>
+          <li id="req-sym" class="req-unmet">❌ At least 1 symbol (@$!%*?&)</li>
+        </ul>
+
+        <input type="password" id="confirm-password" placeholder="Confirm New Password" style="width: 100%; margin-bottom: 5px; padding: 10px;" disabled />
+        <p id="match-msg" style="font-size: 13px; margin: 0 0 15px 5px; height: 15px;"></p>
+
+        <button id="update-password-btn" style="width: 100%;" disabled>Update Password</button>
+        <p id="settings-msg" style="text-align: center; font-size: 14px; margin-top: 10px; margin-bottom: 0; height: 15px;"></p>
+      </div>
+    </div>
+  </div>
 
   <script type="module" src="/main.js"></script>
 </body>
