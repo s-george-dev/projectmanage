@@ -3,15 +3,19 @@
 <head>
   <meta charset="UTF-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1.0" />
-  <title>App Build Manager</title>
+  <title>FieldHub Project Manager</title>
+  <link rel="icon" type="image/png" href="https://fieldhub.uk/assets/images/favicon-transparent.png">
   <style>
     :root {
       --bg-color: #121212;
       --surface-color: #1e1e1e;
+      --surface-light: #2a2a2a;
       --primary-color: #bb86fc;
       --text-main: #e0e0e0;
       --text-muted: #a0a0a0;
       --border-color: #333;
+      --danger: #cf6679;
+      --success: #03dac6;
     }
     body {
       font-family: system-ui, -apple-system, sans-serif;
@@ -22,71 +26,165 @@
       display: flex;
       flex-direction: column;
       align-items: center;
+      overflow-x: hidden;
     }
-    .container {
-      width: 100%;
-      max-width: 600px;
-      background: var(--surface-color);
-      padding: 20px;
-      border-radius: 8px;
-      box-shadow: 0 4px 6px rgba(0,0,0,0.3);
-    }
-    input, button {
-      width: 100%;
-      padding: 10px;
-      margin: 8px 0;
-      border-radius: 4px;
-      border: 1px solid var(--border-color);
-      background: var(--bg-color);
-      color: var(--text-main);
-      box-sizing: border-box;
-    }
-    button {
-      background: var(--primary-color);
-      color: #000;
-      font-weight: bold;
-      cursor: pointer;
-      border: none;
-    }
-    button:hover {
-      opacity: 0.9;
-    }
-    .task-item {
-      display: flex;
-      justify-content: space-between;
-      padding: 12px;
-      border-bottom: 1px solid var(--border-color);
-      align-items: center;
-    }
-    .task-item.completed {
-      text-decoration: line-through;
-      color: var(--text-muted);
-    }
+    .container { width: 100%; max-width: 1000px; background: var(--surface-color); padding: 20px; border-radius: 8px; box-shadow: 0 4px 6px rgba(0,0,0,0.3); margin-bottom: 20px; }
+    
+    /* Buttons */
+    button { padding: 10px 20px; border-radius: 4px; border: none; background: var(--primary-color); color: #000; font-weight: bold; cursor: pointer; transition: opacity 0.2s; }
+    button:hover { opacity: 0.8; }
+    button.small-btn { padding: 5px 10px; font-size: 12px; }
+    button.danger-btn { background: var(--danger); color: white; }
+    button.secondary-btn { background: var(--surface-light); color: var(--text-main); border: 1px solid var(--border-color); }
+    button.success-btn { background: var(--success); color: #000; }
+
+    /* Search Input Wrapper */
+    .search-wrapper { position: relative; flex: 1; min-width: 200px; display: flex; align-items: center; }
+    .search-wrapper input { width: 100%; margin: 0; padding-right: 35px; }
+    .search-clear { position: absolute; right: 10px; background: transparent; border: none; color: var(--text-muted); font-size: 16px; padding: 0; cursor: pointer; }
+    .search-clear:hover { color: var(--danger); opacity: 1; }
+
+    /* Modals */
+    .modal-overlay { position: fixed; top: 0; left: 0; width: 100%; height: 100%; background: rgba(0,0,0,0.85); display: flex; justify-content: center; align-items: center; z-index: 1000; visibility: hidden; opacity: 0; transition: 0.3s; }
+    .modal-overlay.active { visibility: visible; opacity: 1; }
+    .modal-content { background: var(--surface-color); width: 100%; max-width: 500px; padding: 30px; border-radius: 12px; position: relative; border: 1px solid var(--border-color); }
+    .close-x { position: absolute; top: 15px; right: 15px; color: var(--danger); font-size: 24px; cursor: pointer; font-weight: bold; }
+
+    /* Form Elements */
+    input, select { padding: 12px; background: var(--bg-color); color: var(--text-main); border: 1px solid var(--border-color); border-radius: 6px; box-sizing: border-box; }
+
+    /* Tasks */
+    .task-item { display: flex; justify-content: space-between; transition: all 0.5s ease-in-out; padding: 15px; border: 1px solid var(--border-color); border-radius: 8px; margin-bottom: 10px; background: var(--surface-light); align-items: center; }
+    .task-item.completed { opacity: 0.5; background: #1a1a1a; }
+    .task-item.completed .task-title { text-decoration: line-through; color: var(--text-muted); }
+    .priority-High { color: #cf6679; font-weight: bold; }
+    .priority-Medium { color: #ffb74d; }
+    .priority-Low { color: #81c784; }
+
+    .filters-bar { display: flex; gap: 10px; background: var(--surface-light); padding: 15px; border-radius: 8px; margin-bottom: 20px; align-items: center; flex-wrap: wrap; }
     .hidden { display: none; }
+
+    /* ANIMATIONS */
+    @keyframes dropInPulse {
+      0% { transform: translateY(-20px) scale(0.95); opacity: 0; }
+      20% { transform: translateY(0) scale(1); opacity: 1; }
+      50% { transform: scale(1.02); box-shadow: 0 0 15px var(--primary-color); }
+      100% { transform: scale(1); box-shadow: none; }
+    }
+    .anim-new { animation: dropInPulse 1.5s ease-out forwards; }
+
+    @keyframes slideOutRight {
+      0% { transform: translateX(0); opacity: 1; }
+      20% { transform: scale(1.02); box-shadow: 0 0 15px var(--danger); }
+      100% { transform: translateX(120%); opacity: 0; }
+    }
+    .anim-slide-out { animation: slideOutRight 0.6s ease-in forwards; pointer-events: none; }
+
+    @keyframes slideInRight {
+      0% { transform: translateX(100%); opacity: 0; }
+      100% { transform: translateX(0); opacity: 1; }
+    }
+    .anim-slide-in { animation: slideInRight 0.5s ease-out forwards; }
+    
+    @keyframes pulseComplete {
+      0% { transform: scale(1); }
+      50% { transform: scale(1.02); box-shadow: 0 0 15px var(--danger); background: var(--surface-color); }
+      100% { transform: scale(1); box-shadow: none; }
+    }
+    .anim-pulse-complete { animation: pulseComplete 0.6s ease-out forwards; pointer-events: none; }
   </style>
 </head>
 <body>
 
   <div id="auth-section" class="container">
-    <h2>Login to Project Tracker</h2>
-    <input type="email" id="email" placeholder="Email" />
-    <input type="password" id="password" placeholder="Password" />
-    <button id="login-btn">Login / Sign Up</button>
-    <p id="auth-msg" style="color: #cf6679; font-size: 14px;"></p>
+    <div style="text-align: center; margin-bottom: 20px;">
+      <img src="https://fieldhub.uk/assets/images/fieldhub-logo-transparent.png" alt="Logo" style="height: 150px;">
+      <h2>Project Manager Login</h2>
+    </div>
+    <input type="email" id="email" placeholder="Email" style="width: 100%; margin-bottom: 10px;"/>
+    <input type="password" id="password" placeholder="Password" style="width: 100%; margin-bottom: 10px;"/>
+    <button id="login-btn" style="width: 100%;">Login</button>
   </div>
 
   <div id="app-section" class="container hidden">
-    <div style="display: flex; justify-content: space-between; align-items: center;">
-      <h2>Build Tasks</h2>
-      <button id="logout-btn" style="width: auto; padding: 5px 10px;">Logout</button>
-    </div>
-    
-    <div style="display: flex; gap: 10px;">
-      <input type="text" id="new-task-input" placeholder="New app feature or bug fix..." />
-      <button id="add-task-btn" style="width: auto;">Add</button>
+    <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 30px;">
+      <img src="https://fieldhub.uk/assets/images/fieldhub-logo-transparent.png" alt="Logo" style="height: 70px;">
+      <div style="display: flex; gap: 10px;">
+        <button id="open-task-modal-btn">＋ New Task</button>
+        <button id="open-cat-modal-btn" class="secondary-btn">⚙ Categories</button>
+        <button id="logout-btn" class="danger-btn">Logout</button>
+      </div>
     </div>
 
-    <div id="task-list" style="margin-top: 20px;"></div>
+    <h3 style="margin-bottom: 10px;">My Tasks & Group Tasks</h3>
+    <div class="filters-bar">
+      <div class="search-wrapper">
+        <input type="text" id="search-my" placeholder="Search my tasks or categories..." />
+        <button class="search-clear" onclick="clearSearch('search-my')">✖</button>
+      </div>
+      <button id="toggle-visibility-btn" class="secondary-btn" style="margin: 0; min-width: 145px;">Hide Completed</button>
+      <select id="filter-priority-my" style="margin: 0;">
+        <option value="All">All Priorities</option>
+        <option value="High">High Only</option>
+        <option value="Medium">Medium Only</option>
+        <option value="Low">Low Only</option>
+      </select>
+      <select id="sort-my" style="margin: 0;">
+        <option value="newest">Newest First</option>
+        <option value="highest">Priority: High to Low</option>
+      </select>
+    </div>
+    <div id="my-task-list" style="margin-bottom: 40px; display: flex; flex-direction: column; gap: 10px;"></div>
+
+    <h3 style="margin-bottom: 10px; border-top: 1px solid var(--border-color); padding-top: 30px;">All Project Tasks</h3>
+    <div class="filters-bar">
+      <div class="search-wrapper">
+        <input type="text" id="search-all" placeholder="Search all tasks or categories..." />
+        <button class="search-clear" onclick="clearSearch('search-all')">✖</button>
+      </div>
+      <select id="filter-user-all" style="margin: 0;">
+        <option value="All">All Users</option>
+      </select>
+      <select id="filter-priority-all" style="margin: 0;">
+        <option value="All">All Priorities</option>
+        <option value="High">High Only</option>
+        <option value="Medium">Medium Only</option>
+        <option value="Low">Low Only</option>
+      </select>
+      <select id="sort-all" style="margin: 0;">
+        <option value="newest">Newest First</option>
+        <option value="highest">Priority: High to Low</option>
+      </select>
+    </div>
+    <div id="all-task-list" style="display: flex; flex-direction: column; gap: 10px;"></div>
+  </div>
+
+  <div id="task-modal" class="modal-overlay">
+    <div class="modal-content">
+      <span class="close-x" onclick="closeModal('task-modal')">&times;</span>
+      <h3 id="form-title" style="margin-top:0;">Create New Task</h3>
+      <input type="text" id="new-task-input" placeholder="Task Description" style="width: 100%; margin-bottom: 15px;"/>
+      <select id="category-select" style="width: 100%; margin-bottom: 15px;"></select>
+      <select id="priority-select" style="width: 100%; margin-bottom: 15px;">
+        <option value="Low">Low Priority</option>
+        <option value="Medium" selected>Medium Priority</option>
+        <option value="High">High Priority</option>
+      </select>
+      <select id="assignee-select" style="width: 100%; margin-bottom: 15px;"></select>
+      <button id="add-task-btn" style="width: 100%;">Save Task</button>
+    </div>
+  </div>
+
+  <div id="cat-modal" class="modal-overlay">
+    <div class="modal-content">
+      <span class="close-x" onclick="closeModal('cat-modal')">&times;</span>
+      <h3 style="margin-top:0;">Manage Categories</h3>
+      <div style="display: flex; gap: 10px; margin-bottom: 20px;">
+        <input type="text" id="new-cat-input" placeholder="New category..." style="margin: 0; flex:1;" />
+        <button id="add-cat-btn">Add</button>
+      </div>
+      <div id="category-list" style="max-height: 300px; overflow-y: auto; display: flex; flex-direction: column; gap: 10px;"></div>
+    </div>
   </div>
 
   <script type="module" src="/main.js"></script>
