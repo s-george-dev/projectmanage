@@ -1,4 +1,4 @@
-import { createClient } from '@supabase/supabase-js';
+import { createClient } from 'https://esm.sh/@supabase/supabase-js';
 
 // Initialize Supabase (Replace with your project keys)
 const supabaseUrl = 'https://hwuyvatkyyxfnyzxrcsm.supabase.co';
