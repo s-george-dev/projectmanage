@@ -1,0 +1,94 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>App Build Manager</title>
+  <style>
+    :root {
+      --bg-color: #121212;
+      --surface-color: #1e1e1e;
+      --primary-color: #bb86fc;
+      --text-main: #e0e0e0;
+      --text-muted: #a0a0a0;
+      --border-color: #333;
+    }
+    body {
+      font-family: system-ui, -apple-system, sans-serif;
+      background-color: var(--bg-color);
+      color: var(--text-main);
+      margin: 0;
+      padding: 20px;
+      display: flex;
+      flex-direction: column;
+      align-items: center;
+    }
+    .container {
+      width: 100%;
+      max-width: 600px;
+      background: var(--surface-color);
+      padding: 20px;
+      border-radius: 8px;
+      box-shadow: 0 4px 6px rgba(0,0,0,0.3);
+    }
+    input, button {
+      width: 100%;
+      padding: 10px;
+      margin: 8px 0;
+      border-radius: 4px;
+      border: 1px solid var(--border-color);
+      background: var(--bg-color);
+      color: var(--text-main);
+      box-sizing: border-box;
+    }
+    button {
+      background: var(--primary-color);
+      color: #000;
+      font-weight: bold;
+      cursor: pointer;
+      border: none;
+    }
+    button:hover {
+      opacity: 0.9;
+    }
+    .task-item {
+      display: flex;
+      justify-content: space-between;
+      padding: 12px;
+      border-bottom: 1px solid var(--border-color);
+      align-items: center;
+    }
+    .task-item.completed {
+      text-decoration: line-through;
+      color: var(--text-muted);
+    }
+    .hidden { display: none; }
+  </style>
+</head>
+<body>
+
+  <div id="auth-section" class="container">
+    <h2>Login to Project Tracker</h2>
+    <input type="email" id="email" placeholder="Email" />
+    <input type="password" id="password" placeholder="Password" />
+    <button id="login-btn">Login / Sign Up</button>
+    <p id="auth-msg" style="color: #cf6679; font-size: 14px;"></p>
+  </div>
+
+  <div id="app-section" class="container hidden">
+    <div style="display: flex; justify-content: space-between; align-items: center;">
+      <h2>Build Tasks</h2>
+      <button id="logout-btn" style="width: auto; padding: 5px 10px;">Logout</button>
+    </div>
+    
+    <div style="display: flex; gap: 10px;">
+      <input type="text" id="new-task-input" placeholder="New app feature or bug fix..." />
+      <button id="add-task-btn" style="width: auto;">Add</button>
+    </div>
+
+    <div id="task-list" style="margin-top: 20px;"></div>
+  </div>
+
+  <script type="module" src="/main.js"></script>
+</body>
+</html>
