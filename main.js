@@ -53,6 +53,9 @@ const viewportObserver = new IntersectionObserver((entries) => {
 
 // --- INIT, AUTH & WORKSPACE INITIALIZATION ---
 async function checkSession() {
+  const isSetup = new URLSearchParams(window.location.search).get('setup_password');
+  if (isSetup) return;
+
   const { data: { session } } = await supabase.auth.getSession();
   
   if (session) {
@@ -1122,7 +1125,6 @@ async function loadAdminDashboard() {
 }
 
 async function fetchAdminUsers(targetOrgId) {
-  // Query now explicitly requests the new email column
   let query = supabase.from('organization_members').select('role, org_id, profiles(id, full_name, is_banned, email), organizations(name)');
   
   if (targetOrgId !== 'all') query = query.eq('org_id', targetOrgId);
@@ -1134,17 +1136,46 @@ async function fetchAdminUsers(targetOrgId) {
     if(!u) return '';
 
     const isMe = u.id === currentUser.id;
-    const isTargetSuper = m.role === 'super_admin';
-    const iAmGeneralAdmin = activeRole === 'general_admin';
     
-    // Determine if controls should be stripped for this specific row
+// Add this to your admin-modal render logic
+const inviteSection = (activeRole === 'super_admin' || activeRole === 'general_admin') ? `
+  <div style="background: var(--surface-light); padding: 15px; margin-top: 20px; border-radius: 8px;">
+    <h4 style="margin-top:0;">Invite New Collaborator</h4>
+    <div style="display: flex; gap: 10px;">
+        <input type="email" id="invite-email-field" placeholder="colleague@email.com" style="flex:1;">
+        <select id="invite-role-field">
+            <option value="general_user">General User</option>
+            <option value="general_admin">Admin</option>
+        </select>
+        <button class="success-btn" onclick="triggerInvite()">Invite</button>
+    </div>
+  </div>
+` : '';
+
+// Add this helper function
+window.triggerInvite = () => {
+    const email = document.getElementById('invite-email-field').value;
+    const role = document.getElementById('invite-role-field').value;
+    inviteCollaborator(email, role);
+};
+
+    // CONSISTENT PROTECTION: 
+    // If the account being rendered is a super_admin, 
+    // they are ALWAYS protected, even from other admins.
+    const isTargetSuper = m.role === 'super_admin';
+    
     let controlsHtml = '';
     
-    if (iAmGeneralAdmin && isTargetSuper) {
-        // Strip controls, display static protective badge
+    if (isTargetSuper) {
+        // This is a Super Admin - apply the protected label and strip all controls
         controlsHtml = `<span style="font-size:12px; color:var(--text-muted); font-weight:bold; padding-right:10px;">Protected Account</span>`;
     } else {
-        // Render normal controls
+        // This is NOT a Super Admin - apply standard controls
+        const backdoorBtns = activeRole === 'super_admin' ? `
+          <button class="small-btn secondary-btn" onclick="adminAction('reset_password', '${u.id}')" title="Send Password Reset Email" ${isMe ? 'disabled' : ''}>📧 Reset</button>
+          <button class="small-btn danger-btn" onclick="adminAction('delete_user', '${u.id}')" title="Hard Delete Account" ${isMe ? 'disabled' : ''}>🗑 Nuke</button>
+        ` : '';
+
         controlsHtml = `
         <select onchange="updateUserRole('${u.id}', '${m.org_id}', this.value)" style="padding:4px; margin:0;" ${isMe ? 'disabled' : ''}>
           <option value="general_user" ${m.role === 'general_user' ? 'selected' : ''}>General User</option>
@@ -1154,7 +1185,8 @@ async function fetchAdminUsers(targetOrgId) {
         
         <button class="small-btn ${u.is_banned ? 'success-btn' : 'danger-btn'}" onclick="toggleBan('${u.id}', ${u.is_banned})" ${isMe ? 'disabled' : ''}>
           ${u.is_banned ? 'Unban' : 'Ban'}
-        </button>`;
+        </button>
+        ${backdoorBtns}`;
     }
 
     return `
@@ -1201,5 +1233,228 @@ document.getElementById('create-org-btn').addEventListener('click', async () => 
     }
   }
 });
+
+document.getElementById('send-invite-btn').addEventListener('click', async () => {
+    const email = document.getElementById('invite-email').value;
+    const role = document.getElementById('invite-role-field')?.value || 'general_user';
+    
+    if(!email) return alert("Enter email");
+
+    // Show a loading state
+    const btn = document.getElementById('send-invite-btn');
+    btn.textContent = "Sending...";
+    btn.disabled = true;
+
+    try {
+        // Call the Edge Function
+       const { data, error } = await supabase.functions.invoke('admin-controls', {
+            body: { 
+                action: 'invite_collaborator', 
+                email: email, 
+                role: role,
+                orgId: activeOrgId,
+                originUrl: window.location.origin // Tells the server where your app is hosted
+            }
+        });
+
+        if (error || data.error) throw new Error(error?.message || data.error);
+
+        alert(data.message);
+        document.getElementById('invite-email').value = ''; // Clear input
+    } catch (err) {
+        alert("Invitation Failed: " + err.message);
+    } finally {
+        btn.textContent = "Invite User";
+        btn.disabled = false;
+    }
+});
+
+window.adminAction = async (actionType, targetUserId) => {
+  let payload = { action: actionType, targetUserId };
+  
+  if (actionType === 'delete_user') {
+    if (!confirm('WARNING: This will permanently destroy this user account across all workspaces. Proceed?')) return;
+  }
+  
+  if (actionType === 'reset_password') {
+    if (!confirm('Send a password recovery email to this user?')) return;
+  }
+
+  try {
+   
+    const { data, error } = await supabase.functions.invoke('admin-controls', {
+      body: payload
+    });
+
+    if (error) throw error;
+    if (data?.error) throw new Error(data.error);
+
+    alert(data.message);
+    loadAdminDashboard(); // Refresh UI
+  } catch (err) {
+    alert("Admin Action Failed: " + err.message);
+  }
+};
+
+window.inviteCollaborator = async (email, role) => {
+  try {
+    const { data, error } = await supabase.functions.invoke('admin-controls', {
+     body: { 
+        action: 'invite_collaborator', 
+        email: email, 
+        role: role,
+        orgId: activeOrgId // Send the currently active workspace ID
+      }
+    });
+
+    if (error || data.error) throw new Error(error?.message || data.error);
+    alert(data.message);
+  } catch (err) {
+    alert("Invitation Failed: " + err.message);
+  }
+};
+
+// Run this when the page loads
+// Run this when the page loads
+window.addEventListener('DOMContentLoaded', () => {
+    const urlParams = new URLSearchParams(window.location.search);
+    const joinCode = urlParams.get('join_code');
+    const setupPassword = urlParams.get('setup_password');
+
+    if (setupPassword) {
+        // 1. Forcefully hide all standard app views
+        const authSection = document.getElementById('auth-section');
+        if (authSection) authSection.classList.add('hidden');
+
+        const orgModal = document.getElementById('org-modal');
+        if (orgModal) {
+            orgModal.classList.remove('active');
+            orgModal.style.display = 'none'; // Hard override
+        }
+
+        const appSection = document.getElementById('app-section');
+        if (appSection) appSection.classList.add('hidden');
+
+        // 2. Show the secure setup view (Fixed: changed 'none' to 'block')
+        const setupView = document.getElementById('setup-password-view');
+        if (setupView) {
+            setupView.style.display = 'block';
+        }
+
+        // 3. Pre-fill the join code automatically
+        if (joinCode) {
+            const joinInput = document.getElementById('setup-join-code');
+            if (joinInput) joinInput.value = joinCode;
+        }
+
+        // 4. Initialize live validation
+        initPasswordValidation();
+    }
+});
+
+function initPasswordValidation() {
+    const passInput = document.getElementById('setup-password');
+    const confirmInput = document.getElementById('setup-confirm-password');
+    const submitBtn = document.getElementById('setup-submit-btn');
+
+    const reqLength = document.getElementById('setup-req-length');
+    const reqUpper = document.getElementById('setup-req-upper');
+    const reqNum = document.getElementById('setup-req-num');
+    const reqSym = document.getElementById('setup-req-sym');
+    const reqMatch = document.getElementById('setup-req-match');
+
+    const validate = () => {
+        const val = passInput.value;
+        const confirmVal = confirmInput.value;
+        let isValid = true;
+
+        // Validation Rules
+        const isLength = val.length >= 6;
+        const isUpper = /[A-Z]/.test(val);
+        const isNum = /[0-9]/.test(val);
+        const isSym = /[^A-Za-z0-9]/.test(val);
+        const isMatch = val === confirmVal && val !== '';
+
+        // UI Updates (Restoring the explicit ✓ and ✗ icons)
+        reqLength.style.color = isLength ? '#22c55e' : '#ef4444';
+        reqLength.textContent = isLength ? '✓ Minimum 6 characters' : '✗ Minimum 6 characters';
+
+        reqUpper.style.color = isUpper ? '#22c55e' : '#ef4444';
+        reqUpper.textContent = isUpper ? '✓ One uppercase letter' : '✗ One uppercase letter';
+
+        reqNum.style.color = isNum ? '#22c55e' : '#ef4444';
+        reqNum.textContent = isNum ? '✓ One number' : '✗ One number';
+
+        reqSym.style.color = isSym ? '#22c55e' : '#ef4444';
+        reqSym.textContent = isSym ? '✓ One symbol (@$!%*?&)' : '✗ One symbol (@$!%*?&)';
+
+        reqMatch.style.color = isMatch ? '#22c55e' : '#ef4444';
+        reqMatch.textContent = isMatch ? '✓ Passwords match' : '✗ Passwords match';
+
+        // Toggle Button State
+        isValid = isLength && isUpper && isNum && isSym && isMatch;
+        if (isValid) {
+            submitBtn.disabled = false;
+            submitBtn.style.opacity = '1';
+            submitBtn.style.cursor = 'pointer';
+        } else {
+            submitBtn.disabled = true;
+            submitBtn.style.opacity = '0.5';
+            submitBtn.style.cursor = 'not-allowed';
+        }
+    };
+
+    // Listen to every keystroke
+    passInput.addEventListener('input', validate);
+    confirmInput.addEventListener('input', validate);
+
+    // Handle Secure Submission
+    submitBtn.addEventListener('click', async () => {
+        submitBtn.textContent = 'Securing Account & Building Profile...';
+        submitBtn.disabled = true;
+
+        // 1. Update the Password in Auth
+        const { data: authData, error: pwError } = await supabase.auth.updateUser({
+            password: passInput.value
+        });
+
+        if (pwError) {
+            alert("Security Error: " + pwError.message);
+            submitBtn.textContent = 'Add Password & Join Workspace';
+            submitBtn.disabled = false;
+            return;
+        }
+
+        // 2. FOOLPROOF FIX: Force Profile and Workspace Initialization
+        const joinCode = document.getElementById('setup-join-code').value;
+        const authUser = authData.user;
+
+        if (joinCode && authUser) {
+            // Find the Org ID from the code
+            const { data: org } = await supabase.from('organizations').select('id').eq('join_code', joinCode).maybeSingle();
+            
+            if (org) {
+                // A. Guarantee the profile exists so checkSession() doesn't crash
+                await supabase.from('profiles').upsert({
+                    id: authUser.id,
+                    email: authUser.email,
+                    full_name: authUser.email.split('@')[0], // Uses the start of their email as a temp name
+                    last_active_org_id: org.id
+                });
+
+                // B. Guarantee they are locked into the workspace table
+                await supabase.from('organization_members').upsert({
+                    user_id: authUser.id,
+                    org_id: org.id,
+                    role: 'general_user' // Will just act as a fallback if the Edge Function missed them
+                }, { onConflict: 'user_id, org_id', ignoreDuplicates: true });
+            }
+        }
+
+        // 3. Clean the URL and Reload into the main dashboard
+        window.history.replaceState({}, document.title, window.location.pathname);
+        location.reload(); 
+    });
+}
 
 checkSession();
