@@ -20,6 +20,34 @@
     body { font-family: system-ui, sans-serif; background-color: var(--bg-color); color: var(--text-main); margin: 0; padding: 20px; display: flex; flex-direction: column; align-items: center; overflow-x: hidden; }
     .container { width: 100%; max-width: 1000px; background: var(--surface-color); padding: 20px; border-radius: 8px; box-shadow: 0 4px 6px rgba(0,0,0,0.3); margin-bottom: 20px; }
     
+    /* --- CUSTOM DARK SCROLLBAR --- */
+    /* Firefox */
+    * {
+      scrollbar-width: auto;
+      scrollbar-color: var(--border-color) var(--bg-color);
+    }
+
+    /* Chrome, Edge, and Safari */
+    ::-webkit-scrollbar {
+      width: 8px;
+      height: 8px;
+    }
+    
+    ::-webkit-scrollbar-track {
+      background: var(--bg-color);
+      border-radius: 4px;
+    }
+    
+    ::-webkit-scrollbar-thumb {
+      background: var(--surface-light);
+      border-radius: 4px;
+      border: 1px solid var(--border-color);
+    }
+    
+    ::-webkit-scrollbar-thumb:hover {
+      background: var(--text-muted);
+    }
+
     button { padding: 10px 20px; border-radius: 4px; border: none; background: var(--primary-color); color: #000; font-weight: bold; cursor: pointer; transition: opacity 0.2s; }
     button:hover { opacity: 0.8; }
     button.small-btn { padding: 5px 10px; font-size: 12px; }
@@ -75,6 +103,57 @@
     #password-reqs li { transition: color 0.3s ease-in-out, transform 0.2s ease; margin-bottom: 5px; display: flex; align-items: center; gap: 8px; }
     .req-unmet { color: var(--text-muted); }
     .req-met { color: var(--success); transform: translateX(5px); font-weight: bold; }
+
+/* --- DASHBOARD GRID & CARD STYLES --- */
+.dashboard-layout { display: flex; flex-direction: column; gap: 20px; }
+
+/* Switched from Grid to Columns to create a tight Masonry layout */
+.dashboard-layout.grid-mode { display: block; column-gap: 20px; }
+
+/* Column Options */
+.dashboard-layout.grid-mode.cols-1 { column-count: 1; }
+.dashboard-layout.grid-mode.cols-2 { column-count: 2; }
+.dashboard-layout.grid-mode.cols-3 { column-count: 3; }
+
+.dash-card {
+  background: var(--surface-color);
+  border: 1px solid var(--border-color);
+  border-radius: 8px;
+  
+  /* NEW: Prevents the cards from splitting in half across columns */
+  display: inline-flex;
+  width: 100%;
+  break-inside: avoid;
+  page-break-inside: avoid;
+  margin-bottom: 20px;
+  
+  flex-direction: column;
+  overflow: hidden;
+  box-shadow: 0 4px 6px rgba(0,0,0,0.2);
+  resize: vertical; 
+  min-height: 200px;
+}
+
+.drag-handle {
+  background: var(--surface-light);
+  padding: 10px 15px;
+  border-bottom: 1px solid var(--border-color);
+  font-weight: bold;
+  cursor: grab;
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+}
+.drag-handle:active { cursor: grabbing; }
+
+.card-content {
+  padding: 15px;
+  overflow-y: auto; 
+  flex: 1;
+}
+
+
+
   </style>
 </head>
 <body>
@@ -128,36 +207,71 @@
       </div>
     </div>
 
-    <h3 style="margin-bottom: 10px;">My Tasks & Group Tasks</h3>
-    <div class="filters-bar">
-      <div class="search-wrapper"><input type="text" id="search-my" placeholder="Search my tasks..." /><button class="search-clear" onclick="clearSearch('search-my')">✖</button></div>
-      <label style="display: flex; align-items: center; gap: 8px; cursor: pointer; color: var(--text-muted); font-size: 14px; margin: 0;">
-        <label class="switch"><input type="checkbox" id="visibility-toggle" checked><span class="slider"></span></label>
-        <span id="visibility-label">Show Completed</span>
-      </label>
-      <select id="filter-priority-my" style="margin: 0;"><option value="All">All Priorities</option><option value="High">High</option><option value="Medium">Medium</option><option value="Low">Low</option></select>
-      <select id="sort-my" style="margin: 0;"><option value="newest">Newest First</option><option value="highest">Priority: High to Low</option></select>
+    <div style="display: flex; gap: 15px; margin-bottom: 20px; background: var(--surface-light); padding: 10px; border-radius: 8px; align-items: center;">
+      <span style="font-weight: bold; color: var(--text-muted);">Dashboard Layout:</span>
+      <select id="layout-mode" style="margin: 0; min-width: 150px;">
+        <option value="stacked">Stacked List</option>
+        <option value="grid">Card Grid</option>
+      </select>
+      <select id="grid-columns" class="hidden" style="margin: 0; min-width: 150px;">
+        <option value="1">1 Column</option>
+        <option value="2" selected>2 Columns</option>
+        <option value="3">3 Columns</option>
+      </select>
+       <label style="display: flex; align-items: center; gap: 8px; cursor: pointer; color: var(--text-muted); font-size: 14px; margin: 0;">
+              <label class="switch"><input type="checkbox" id="visibility-toggle" checked><span class="slider"></span></label>
+              <span id="visibility-label">Show Completed</span>
+            </label>
     </div>
-    <div id="my-task-list" style="margin-bottom: 40px; display: flex; flex-direction: column; gap: 10px;"></div>
 
-    <h3 style="margin-bottom: 10px; border-top: 1px solid var(--border-color); padding-top: 30px;">All Project Tasks</h3>
-    <div class="filters-bar">
-      <div class="search-wrapper"><input type="text" id="search-all" placeholder="Search all tasks..." /><button class="search-clear" onclick="clearSearch('search-all')">✖</button></div>
-      <select id="filter-user-all" style="margin: 0;"><option value="All">All Users</option></select>
-      <select id="filter-priority-all" style="margin: 0;"><option value="All">All Priorities</option><option value="High">High</option><option value="Medium">Medium</option><option value="Low">Low</option></select>
-      <select id="sort-all" style="margin: 0;"><option value="newest">Newest First</option><option value="highest">Priority: High to Low</option></select>
-    </div>
-    <div id="all-task-list" style="display: flex; flex-direction: column; gap: 10px;"></div>
-
-    <div style="margin-top: 40px; border-top: 1px solid var(--border-color); padding-top: 20px;">
-      <h3>Project Chat & Updates</h3>
-      <div id="message-list" style="height: 250px; overflow-y: auto; background: var(--surface-light); padding: 15px; border-radius: 8px; margin-bottom: 10px; display: flex; flex-direction: column; gap: 10px;"></div>
-      <div style="display: flex; gap: 10px;">
-        <input type="text" id="new-msg-input" placeholder="Type a message (must select a specific project first)..." style="margin: 0; flex: 1;" disabled />
-        <button id="send-msg-btn" disabled>Send</button>
+    <div id="dashboard-canvas" class="dashboard-layout stacked-mode">
+      
+      <div class="dash-card" data-id="card-my-tasks">
+        <div class="drag-handle">
+          <span>🎯 My Tasks & Group Tasks</span>
+          <span style="color: var(--text-muted); cursor: pointer;" title="Drag to move">⋮⋮</span>
+        </div>
+        <div class="card-content">
+          <div class="filters-bar" style="margin-bottom: 15px;">
+            <div class="search-wrapper"><input type="text" id="search-my" placeholder="Search..." /><button class="search-clear" onclick="clearSearch('search-my')">✖</button></div>
+            <select id="filter-priority-my" style="margin: 0;"><option value="All">All Priorities</option><option value="High">High</option><option value="Medium">Medium</option><option value="Low">Low</option></select>
+            <select id="sort-my" style="margin: 0;"><option value="newest">Newest First</option><option value="highest">Priority: High to Low</option></select>
+          </div>
+          <div id="my-task-list" style="display: flex; flex-direction: column; gap: 10px;"></div>
+        </div>
       </div>
+
+      <div class="dash-card" data-id="card-all-tasks">
+        <div class="drag-handle">
+          <span>📋 All Project Tasks</span>
+          <span style="color: var(--text-muted); cursor: pointer;" title="Drag to move">⋮⋮</span>
+        </div>
+        <div class="card-content">
+          <div class="filters-bar" style="margin-bottom: 15px;">
+            <div class="search-wrapper"><input type="text" id="search-all" placeholder="Search..." /><button class="search-clear" onclick="clearSearch('search-all')">✖</button></div>
+            <select id="filter-user-all" style="margin: 0;"><option value="All">All Users</option></select>
+            <select id="filter-priority-all" style="margin: 0;"><option value="All">All Priorities</option><option value="High">High</option><option value="Medium">Medium</option><option value="Low">Low</option></select>
+            <select id="sort-all" style="margin: 0;"><option value="newest">Newest First</option><option value="highest">Priority: High to Low</option></select>
+          </div>
+          <div id="all-task-list" style="display: flex; flex-direction: column; gap: 10px;"></div>
+        </div>
+      </div>
+
+      <div class="dash-card" data-id="card-chat">
+        <div class="drag-handle">
+          <span id="chat-card-title">💬 Project Chat & Updates</span>
+          <span style="color: var(--text-muted); cursor: pointer;" title="Drag to move">⋮⋮</span>
+        </div>
+        <div class="card-content" style="display: flex; flex-direction: column;">
+          <div id="message-list" style="flex: 1; min-height: 200px; overflow-y: auto; background: var(--surface-light); padding: 15px; border-radius: 8px; margin-bottom: 10px; display: flex; flex-direction: column; gap: 10px;"></div>
+          <div id="chat-input-area" style="display: flex; gap: 10px;">
+            <input type="text" id="new-msg-input" placeholder="Type a message..." style="margin: 0; flex: 1;" />
+            <button id="send-msg-btn">Send</button>
+          </div>
+        </div>
+      </div>
+
     </div>
-  </div>
 
   <div id="task-modal" class="modal-overlay">
     <div class="modal-content">
@@ -276,8 +390,6 @@
       <span class="close-x" onclick="closeModal('admin-modal')">&times;</span>
       <h3 style="margin-top:0;">Organisation & User Administration</h3>
       
-      <!-- Organisation Management  -->
-
       <div id="admin-orgs-section" class="hidden" style="background: var(--surface-light); padding: 15px; border-radius: 8px; border: 1px solid var(--border-color); margin-bottom: 20px;">
         <h4 style="margin-top:0; color: var(--primary-color);">Manage Organisations</h4>
         <div style="display: flex; gap: 10px; margin-bottom: 15px;">
@@ -288,11 +400,26 @@
         <div id="admin-org-list" style="max-height: 200px; overflow-y: auto; display: flex; flex-direction: column; gap: 8px;"></div>
       </div>
 
-      <!-- User Management -->
+      <div id="admin-broadcast-section" style="background: var(--surface-light); padding: 15px; border-radius: 8px; border: 1px solid var(--border-color); margin-bottom: 20px;">
+        <h4 style="margin-top:0; margin-bottom: 15px; color: var(--success);">📢 Workspace Broadcast</h4>
+        <textarea id="broadcast-input" placeholder="Type a workspace-wide update..." style="width: 100%; margin-bottom: 10px; padding: 10px; border-radius: 6px; background: var(--bg-color); color: var(--text-main); border: 1px solid var(--border-color); resize: vertical; min-height: 80px; font-family: inherit;"></textarea>
+        
+        <div style="display: flex; gap: 10px; align-items: center; margin-bottom: 15px;">
+          <label style="font-size: 14px; color: var(--text-muted);">Expires:</label>
+          <select id="broadcast-expiry" style="flex: 1; margin: 0; padding: 10px;">
+            <option value="never">Never Expires</option>
+            <option value="1">1 Day</option>
+            <option value="7">7 Days</option>
+            <option value="30">30 Days</option>
+          </select>
+        </div>
+        <button id="send-broadcast-btn" class="success-btn" style="width: 100%;">Post Update to Workspace</button>
+        <p id="broadcast-msg" style="text-align: center; font-size: 14px; margin-top: 10px; margin-bottom: 0; height: 15px;"></p>
+      </div>
 
       <div style="background: var(--surface-light); padding: 15px; border-radius: 8px; border: 1px solid var(--border-color);">
         <h4 style="margin-top:0; color: var(--primary-color);">Manage Users</h4>
-        <div style="margin-top: 20px; display: flex; gap: 10px;">
+          <div style="margin-top: 20px; display: flex; gap: 10px;">
           <input type="email" id="invite-email" placeholder="Email to invite..." style="flex:1;" />
           <button id="send-invite-btn" class="secondary-btn">Invite User</button>
         </div>

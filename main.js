@@ -1,4 +1,5 @@
 import { createClient } from 'https://esm.sh/@supabase/supabase-js';
+import Sortable from 'https://cdn.jsdelivr.net/npm/sortablejs@latest/modular/sortable.esm.js';
 
 const supabaseUrl = 'https://hwuyvatkyyxfnyzxrcsm.supabase.co';
 const supabaseKey = 'sb_publishable_4opExcpgvIsblEQjDfqB3A_VMlCVNdG';
@@ -603,45 +604,76 @@ document.getElementById('new-msg-input').addEventListener('keypress', (e) => {
 });
 
 async function fetchMessages() {
+    const chatTitle = document.getElementById('chat-card-title');
+    const chatInputArea = document.getElementById('chat-input-area');
+
+    // 1. Toggle UI between Updates Mode and Chat Mode
     if (activeGlobalProjectId === 'all') {
-        document.getElementById('message-list').innerHTML = '<p style="color: var(--text-muted); text-align: center;">Select a specific project to view chat.</p>';
-        document.getElementById('new-msg-input').disabled = true;
-        document.getElementById('send-msg-btn').disabled = true;
-        return;
+        if(chatTitle) chatTitle.innerHTML = "📢 Workspace Updates";
+        if(chatInputArea) chatInputArea.classList.add('hidden');
+    } else {
+        if(chatTitle) chatTitle.innerHTML = "💬 Project Chat";
+        if(chatInputArea) chatInputArea.classList.remove('hidden');
     }
 
-    document.getElementById('new-msg-input').disabled = false;
-    document.getElementById('send-msg-btn').disabled = false;
-
-    const { data } = await supabase
+    // 2. Fetch the data
+    let query = supabase
         .from('messages')
         .select('*, profile:profiles(full_name)')
-        .eq('project_id', activeGlobalProjectId)
         .eq('org_id', activeOrgId)
         .order('created_at', { ascending: true });
-    
+
+    // THE FIX: Use .is('project_id', null) for the global updates board
+    if (activeGlobalProjectId === 'all') {
+        query = query.is('project_id', null);
+    } else {
+        query = query.eq('project_id', activeGlobalProjectId);
+    }
+
+    const { data, error } = await query;
+    if (error) console.error("Message Fetch Error:", error.message);
+
     if (data) {
-        const msgHtml = data.map(m => {
+        // 3. Filter out expired updates
+        const now = new Date();
+        const validMessages = data.filter(m => !m.expires_at || new Date(m.expires_at) > now);
+
+        const msgHtml = validMessages.map(m => {
             const isMe = m.user_id === currentUser.id;
-            const timeString = new Date(m.created_at).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' });
-            const deleteBtn = isMe ? `<button class="small-btn danger-btn" style="padding: 2px 6px; margin-left: 10px;" onclick="deleteMessage('${m.id}')">X</button>` : '';
+            
+            // ROLE-BASED DELETION LOGIC
+            let canDelete = false;
+            if (activeRole === 'super_admin') canDelete = true;
+            else if (activeRole === 'general_admin' && isMe) canDelete = true;
+            // general_user remains false implicitly
+
+            const deleteBtn = canDelete ? `<button class="small-btn danger-btn" style="padding: 2px 6px; margin-left: 10px;" onclick="deleteMessage('${m.id}')">X</button>` : '';
+            
+            // Styling logic (Updates look like announcements, Chat looks like bubbles)
+            const isUpdate = activeGlobalProjectId === 'all';
+            const bubbleColor = isMe && !isUpdate ? 'var(--primary-color)' : 'var(--surface-color)';
+            const textColor = isMe && !isUpdate ? '#000' : 'var(--text-main)';
+            const dateStr = new Date(m.created_at).toLocaleDateString([], { month: 'short', day: 'numeric' });
+            const timeStr = new Date(m.created_at).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' });
 
             return `
-                <div style="display: flex; flex-direction: column; align-items: ${isMe ? 'flex-end' : 'flex-start'}; margin-bottom: 8px;">
+                <div style="display: flex; flex-direction: column; align-items: ${isMe && !isUpdate ? 'flex-end' : 'flex-start'}; margin-bottom: 12px;">
                     <div style="display: flex; align-items: center;">
-                        <span style="font-size: 10px; color: var(--text-muted); margin-bottom: 3px;">
-                            ${m.profile?.full_name || 'Unknown User'} &middot; ${timeString}
+                        <span style="font-size: 11px; color: var(--text-muted); margin-bottom: 3px; font-weight: bold;">
+                            ${m.profile?.full_name || 'Unknown User'} &middot; ${dateStr} at ${timeStr}
                         </span>
                         ${deleteBtn}
                     </div>
-                    <div style="background: ${isMe ? 'var(--primary-color)' : 'var(--surface-color)'}; color: ${isMe ? '#000' : 'var(--text-main)'}; padding: 8px 12px; border-radius: 8px; max-width: 80%; word-wrap: break-word;">
+                    <div style="background: ${bubbleColor}; color: ${textColor}; padding: 10px 14px; border-radius: 8px; max-width: 85%; word-wrap: break-word; border: ${isUpdate ? '1px solid var(--success)' : 'none'}">
                         ${m.content}
                     </div>
                 </div>
             `;
         }).join('');
+
         const msgList = document.getElementById('message-list');
-        msgList.innerHTML = msgHtml || '<p style="color: var(--text-muted); text-align: center;">No messages yet. Start the conversation!</p>';
+        const emptyText = activeGlobalProjectId === 'all' ? "No active workspace updates at this time." : "No messages yet. Start the conversation!";
+        msgList.innerHTML = msgHtml || `<p style="color: var(--text-muted); text-align: center; margin-top: 20px;">${emptyText}</p>`;
         msgList.scrollTop = msgList.scrollHeight; 
     }
 }
@@ -694,6 +726,43 @@ if (visibilityToggle) {
     }
   });
 }
+// --- DASHBOARD LAYOUT & DRAG ENGINE ---
+const dashCanvas = document.getElementById('dashboard-canvas');
+const layoutMode = document.getElementById('layout-mode');
+const gridColumns = document.getElementById('grid-columns');
+
+// 1. Initialize Drag and Drop
+if (dashCanvas) {
+    new Sortable(dashCanvas, {
+        animation: 150,
+        handle: '.drag-handle', // Only allows dragging from the top bar
+        ghostClass: 'sortable-ghost', // Styling for the drop placeholder
+        onEnd: () => {
+            // Future-proofing: You can save the new card order to localStorage or the DB here
+            console.log("Dashboard layout rearranged");
+        }
+    });
+}
+
+// 2. Handle Layout Switching
+layoutMode.addEventListener('change', (e) => {
+    if (e.target.value === 'grid') {
+        dashCanvas.classList.remove('stacked-mode');
+        dashCanvas.classList.add('grid-mode');
+        dashCanvas.classList.add(`cols-${gridColumns.value}`);
+        gridColumns.classList.remove('hidden');
+    } else {
+        dashCanvas.classList.remove('grid-mode', 'cols-1', 'cols-2', 'cols-3');
+        dashCanvas.classList.add('stacked-mode');
+        gridColumns.classList.add('hidden');
+    }
+});
+
+// 3. Handle Column Adjustments
+gridColumns.addEventListener('change', (e) => {
+    dashCanvas.classList.remove('cols-1', 'cols-2', 'cols-3');
+    dashCanvas.classList.add(`cols-${e.target.value}`);
+});
 
 function renderTasks() {
   if (isAnimating) return;
@@ -895,6 +964,17 @@ document.getElementById('open-settings-btn').addEventListener('click', () => {
   document.getElementById('notif-status-task').checked = notifPrefs.statusTask;
   document.getElementById('notif-msg').checked = notifPrefs.newMsg;
   document.getElementById('notif-login').checked = notifPrefs.login;
+
+  // NEW: Hide/Show Broadcast Tool based on Role
+  const broadcastSect = document.getElementById('settings-broadcast-section');
+  if (broadcastSect) {
+      if (activeRole === 'super_admin' || activeRole === 'general_admin') {
+          broadcastSect.classList.remove('hidden');
+      } else {
+          broadcastSect.classList.add('hidden');
+      }
+  }
+  
   openModal('settings-modal');
 });
 
@@ -1456,5 +1536,43 @@ function initPasswordValidation() {
         location.reload(); 
     });
 }
+// --- ADMIN BROADCAST PIPELINE ---
+document.getElementById('send-broadcast-btn')?.addEventListener('click', async () => {
+    const content = document.getElementById('broadcast-input').value.trim();
+    const expiryDays = document.getElementById('broadcast-expiry').value;
+    const msgEl = document.getElementById('broadcast-msg');
+
+    if (!content) return;
+
+    msgEl.style.color = "var(--text-main)";
+    msgEl.textContent = "Broadcasting...";
+
+    // Calculate Expiry Timestamp
+    let expiresAt = null;
+    if (expiryDays !== 'never') {
+        const date = new Date();
+        date.setDate(date.getDate() + parseInt(expiryDays));
+        expiresAt = date.toISOString();
+    }
+
+    const { error } = await supabase.from('messages').insert([{
+        project_id: null, 
+        user_id: currentUser.id,
+        org_id: activeOrgId,
+        content: content,
+        expires_at: expiresAt
+    }]);
+
+    if (error) {
+        msgEl.style.color = "var(--danger)";
+        msgEl.textContent = error.message;
+    } else {
+        msgEl.style.color = "var(--success)";
+        msgEl.textContent = "Broadcast published to workspace!";
+        document.getElementById('broadcast-input').value = '';
+        fetchMessages(); // Auto-refresh the view
+        setTimeout(() => msgEl.textContent = '', 2000);
+    }
+});
 
 checkSession();
