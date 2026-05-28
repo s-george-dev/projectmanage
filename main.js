@@ -78,6 +78,7 @@ async function checkSession() {
         profile.email = currentUser.email;
       }
 
+            
       // Fetch user's workspaces from the junction table
       const { data: memberships } = await supabase
         .from('organization_members')
@@ -110,12 +111,51 @@ async function checkSession() {
         activeRole = currentMembership.role;
 
         // Populate the Header Workspace Switcher
-        const wsSelect = document.getElementById('workspace-select');
-        wsSelect.innerHTML = myOrgs.map(m => `<option value="${m.org_id}" ${m.org_id === activeOrgId ? 'selected' : ''}>🏢 ${m.organizations.name}</option>`).join('');
+        const wsSelect = document.getElementById('active-org-select');
+        if (wsSelect) {
+            wsSelect.innerHTML = myOrgs.map(m => `<option value="${m.org_id}" ${m.org_id === activeOrgId ? 'selected' : ''}>🏢 ${m.organizations.name}</option>`).join('');
+        }
+        // --- POPULATE TOP NAV PROFILE ---
+      if (currentUser && profile) {
+          const friendlyName = profile.full_name || currentUser.email.split('@')[0];
+          document.getElementById('nav-user-name').textContent = friendlyName;
+          document.getElementById('nav-user-email').textContent = currentUser.email;
+          
+          // Generate Avatar Initial
+          document.getElementById('nav-user-avatar').textContent = friendlyName.charAt(0);
+      }
+        // --- NEW PLACEMENT: UPDATE UI AFTER DATA IS LOADED ---
         
+        // Update the Role Badge Text
+        let roleText = "General User";
+        if (activeRole === 'super_admin') roleText = "Super Admin";
+        else if (activeRole === 'general_admin') roleText = "Admin";
+        document.getElementById('nav-user-role').textContent = roleText;
+
+        // Show/Hide Admin Sidebar Buttons
+        const adminBtns = document.querySelectorAll('.admin-only');
+        if (activeRole === 'super_admin' || activeRole === 'general_admin') {
+            adminBtns.forEach(btn => btn.classList.remove('hidden'));
+        } else {
+            adminBtns.forEach(btn => btn.classList.add('hidden'));
+        }
+
+        // Update Top Nav Org Name
+        if (wsSelect && wsSelect.options.length > 0) {
+            document.getElementById('top-nav-org-name').textContent = wsSelect.options[wsSelect.selectedIndex].text;
+        }
+
+        // --- END NEW PLACEMENT ---
+
         // Reveal Admin Panel Button if they have authority in THIS workspace
         if (activeRole === 'super_admin' || activeRole === 'general_admin') {
-          const adminBtn = document.getElementById('open-admin-btn');
+          const adminBtn = document.getElementById('nav-admin-panel-btn');
+          if (adminBtn) adminBtn.classList.remove('hidden');
+        }
+
+        // Reveal Admin Panel Button if they have authority in THIS workspace
+        if (activeRole === 'super_admin' || activeRole === 'general_admin') {
+          const adminBtn = document.getElementById('nav-admin-panel-btn');
           if (adminBtn) adminBtn.classList.remove('hidden');
         }
 
@@ -135,13 +175,16 @@ async function checkSession() {
 }
 
 // Header Workspace Switcher Logic
-document.getElementById('workspace-select').addEventListener('change', async (e) => {
-    activeOrgId = e.target.value;
-    // Save to profile so it remembers where they left off
-    await supabase.from('profiles').update({ last_active_org_id: activeOrgId }).eq('id', currentUser.id);
-    // Securely reload the app to purge old data and re-initialize the real-time sockets
-    location.reload(); 
-});
+const orgSelectDropdown = document.getElementById('active-org-select');
+if (orgSelectDropdown) {
+    orgSelectDropdown.addEventListener('change', async (e) => {
+        activeOrgId = e.target.value;
+        // Save to profile so it remembers where they left off
+        await supabase.from('profiles').update({ last_active_org_id: activeOrgId }).eq('id', currentUser.id);
+        // Securely reload the app to purge old data and re-initialize the real-time sockets
+        location.reload(); 
+    });
+}
 
 // Lock Screen Verification Logic (First time join)
 document.getElementById('verify-org-btn').addEventListener('click', async () => {
@@ -379,15 +422,26 @@ window.closeModal = (id) => {
   }
 };
 
-document.getElementById('open-task-modal-btn').addEventListener('click', () => {
+// --- SIDEBAR NAVIGATION LISTENERS ---
+const navNewTaskBtn = document.getElementById('nav-new-task-btn');
+if (navNewTaskBtn) {
+  navNewTaskBtn.addEventListener('click', () => {
     if(activeGlobalProjectId !== 'all') {
         document.getElementById('task-project-select').value = activeGlobalProjectId;
     }
     openModal('task-modal');
-});
+  });
+}
 
-document.getElementById('open-proj-modal-btn').addEventListener('click', () => openModal('project-modal'));
-document.getElementById('open-cat-modal-btn').addEventListener('click', () => openModal('cat-modal'));
+const navNewProjectBtn = document.getElementById('nav-new-project-btn');
+if (navNewProjectBtn) {
+  navNewProjectBtn.addEventListener('click', () => openModal('project-modal'));
+}
+
+const navCategoriesBtn = document.getElementById('nav-categories-btn');
+if (navCategoriesBtn) {
+  navCategoriesBtn.addEventListener('click', () => openModal('cat-modal'));
+}
 
 // --- WRITE PIPELINES ---
 document.getElementById('add-proj-btn').addEventListener('click', async () => {
@@ -610,10 +664,12 @@ async function fetchMessages() {
     // 1. Toggle UI between Updates Mode and Chat Mode
     if (activeGlobalProjectId === 'all') {
         if(chatTitle) chatTitle.innerHTML = "📢 Workspace Updates";
-        if(chatInputArea) chatInputArea.classList.add('hidden');
+        // THE FIX: Directly manipulate the style to override inline CSS
+        if(chatInputArea) chatInputArea.style.display = 'none'; 
     } else {
         if(chatTitle) chatTitle.innerHTML = "💬 Project Chat";
-        if(chatInputArea) chatInputArea.classList.remove('hidden');
+        // Bring it back as a flex container
+        if(chatInputArea) chatInputArea.style.display = 'flex'; 
     }
 
     // 2. Fetch the data
@@ -745,42 +801,71 @@ if (dashCanvas) {
 }
 
 // 2. Handle Layout Switching
-layoutMode.addEventListener('change', (e) => {
-    if (e.target.value === 'grid') {
-        dashCanvas.classList.remove('stacked-mode');
-        dashCanvas.classList.add('grid-mode');
-        dashCanvas.classList.add(`cols-${gridColumns.value}`);
-        gridColumns.classList.remove('hidden');
-    } else {
-        dashCanvas.classList.remove('grid-mode', 'cols-1', 'cols-2', 'cols-3');
-        dashCanvas.classList.add('stacked-mode');
-        gridColumns.classList.add('hidden');
-    }
-});
+if (layoutMode && gridColumns && dashCanvas) {
+    layoutMode.addEventListener('change', (e) => {
+        if (e.target.value === 'grid') {
+            dashCanvas.classList.remove('stacked-mode');
+            dashCanvas.classList.add('grid-mode');
+            dashCanvas.classList.add(`cols-${gridColumns.value}`);
+            gridColumns.classList.remove('hidden');
+        } else {
+            dashCanvas.classList.remove('grid-mode', 'cols-1', 'cols-2', 'cols-3');
+            dashCanvas.classList.add('stacked-mode');
+            gridColumns.classList.add('hidden');
+        }
+    });
 
-// 3. Handle Column Adjustments
-gridColumns.addEventListener('change', (e) => {
-    dashCanvas.classList.remove('cols-1', 'cols-2', 'cols-3');
-    dashCanvas.classList.add(`cols-${e.target.value}`);
-});
+    // 3. Handle Column Adjustments
+    gridColumns.addEventListener('change', (e) => {
+        dashCanvas.classList.remove('cols-1', 'cols-2', 'cols-3');
+        dashCanvas.classList.add(`cols-${e.target.value}`);
+    });
+}
 
 function renderTasks() {
+  // Preserve your animation locks
   if (isAnimating) return;
-  const searchMy = document.getElementById('search-my').value.toLowerCase();
-  const searchAll = document.getElementById('search-all').value.toLowerCase();
-  const prioMy = document.getElementById('filter-priority-my').value;
-  const sortMy = document.getElementById('sort-my').value;
-  const prioAll = document.getElementById('filter-priority-all').value;
-  const sortAll = document.getElementById('sort-all').value;
-  const userAll = document.getElementById('filter-user-all').value;
 
-  let myTasks = allTasksData.filter(t => t.assigned_to === currentUser.id || t.is_group_task);
-  myTasks = processList(myTasks, searchMy, prioMy, sortMy, 'All');
-  let allTasks = processList(allTasksData, searchAll, prioAll, sortAll, userAll);
-
-  document.getElementById('my-task-list').innerHTML = buildHTML(myTasks, 'my');
-  document.getElementById('all-task-list').innerHTML = buildHTML(allTasks, 'all');
+  // 1. GRAB GLOBAL FILTERS (Using strict existence checks)
+  const priorityEl = document.getElementById('global-filter-priority');
+  const sortEl = document.getElementById('global-sort');
+  const toggleEl = document.getElementById('visibility-toggle');
   
+  const globalPriority = priorityEl ? priorityEl.value : 'All';
+  const globalSort = sortEl ? sortEl.value : 'newest';
+  const showCompleted = toggleEl ? toggleEl.checked : true;
+
+  // 2. GRAB SPECIFIC SEARCH & USER FILTERS
+  const searchMyEl = document.getElementById('search-my');
+  const searchAllEl = document.getElementById('search-all');
+  const filterUserEl = document.getElementById('filter-user-all');
+
+  const searchMy = searchMyEl ? searchMyEl.value.toLowerCase() : '';
+  const searchAll = searchAllEl ? searchAllEl.value.toLowerCase() : '';
+  const userAll = filterUserEl ? filterUserEl.value : 'All';
+
+  // 3. PRE-FILTER SHOW COMPLETED TOGGLE (Applies to everything)
+  let visibleData = allTasksData;
+  if (!showCompleted) {
+      // Assuming your database uses 'Completed' or a boolean. Adjust if needed!
+      visibleData = visibleData.filter(t => t.status !== 'Completed' && t.is_completed !== true);
+  }
+
+  // 4. PROCESS MY TASKS (Injecting the global variables)
+  let myTasks = visibleData.filter(t => t.assigned_to === currentUser.id || t.is_group_task);
+  myTasks = processList(myTasks, searchMy, globalPriority, globalSort, 'All');
+  
+  // 5. PROCESS ALL TASKS (Injecting the exact same global variables)
+  let allTasks = processList(visibleData, searchAll, globalPriority, globalSort, userAll);
+
+  // 6. RENDER HTML USING YOUR HELPER
+  const myTaskList = document.getElementById('my-task-list');
+  const allTaskList = document.getElementById('all-task-list');
+  
+  if (myTaskList) myTaskList.innerHTML = buildHTML(myTasks, 'my');
+  if (allTaskList) allTaskList.innerHTML = buildHTML(allTasks, 'all');
+  
+  // 7. PRESERVE OBSERVERS AND STATE RESETS
   document.querySelectorAll('.unseen-task').forEach(el => {
     viewportObserver.observe(el);
   });
@@ -950,33 +1035,36 @@ window.deleteMessage = async (id) => {
 };
 
 // --- SETTINGS PREFERENCES LOGIC ---
-document.getElementById('open-settings-btn').addEventListener('click', () => {
-  if (currentUserProfile) {
-    document.getElementById('settings-name-input').value = currentUserProfile.full_name || '';
-    document.getElementById('settings-default-project').value = currentUserProfile.default_project || 'all';
-    
-    // Load Workspace Settings
-    document.getElementById('settings-default-workspace').innerHTML = myOrgs.map(m => `<option value="${m.org_id}">${m.organizations.name}</option>`).join('');
-    document.getElementById('settings-default-workspace').value = currentUserProfile.default_org_id || activeOrgId;
-  }
-  document.getElementById('notif-new-task').checked = notifPrefs.newTask;
-  document.getElementById('notif-del-task').checked = notifPrefs.delTask;
-  document.getElementById('notif-status-task').checked = notifPrefs.statusTask;
-  document.getElementById('notif-msg').checked = notifPrefs.newMsg;
-  document.getElementById('notif-login').checked = notifPrefs.login;
+const navSettingsBtn = document.getElementById('nav-settings-btn');
+if (navSettingsBtn) {
+  navSettingsBtn.addEventListener('click', () => {
+    if (currentUserProfile) {
+      document.getElementById('settings-name-input').value = currentUserProfile.full_name || '';
+      document.getElementById('settings-default-project').value = currentUserProfile.default_project || 'all';
+      
+      // Load Workspace Settings
+      document.getElementById('settings-default-workspace').innerHTML = myOrgs.map(m => `<option value="${m.org_id}">${m.organizations.name}</option>`).join('');
+      document.getElementById('settings-default-workspace').value = currentUserProfile.default_org_id || activeOrgId;
+    }
+    document.getElementById('notif-new-task').checked = notifPrefs.newTask;
+    document.getElementById('notif-del-task').checked = notifPrefs.delTask;
+    document.getElementById('notif-status-task').checked = notifPrefs.statusTask;
+    document.getElementById('notif-msg').checked = notifPrefs.newMsg;
+    document.getElementById('notif-login').checked = notifPrefs.login;
 
-  // NEW: Hide/Show Broadcast Tool based on Role
-  const broadcastSect = document.getElementById('settings-broadcast-section');
-  if (broadcastSect) {
-      if (activeRole === 'super_admin' || activeRole === 'general_admin') {
-          broadcastSect.classList.remove('hidden');
-      } else {
-          broadcastSect.classList.add('hidden');
-      }
-  }
-  
-  openModal('settings-modal');
-});
+    // NEW: Hide/Show Broadcast Tool based on Role
+    const broadcastSect = document.getElementById('settings-broadcast-section');
+    if (broadcastSect) {
+        if (activeRole === 'super_admin' || activeRole === 'general_admin') {
+            broadcastSect.classList.remove('hidden');
+        } else {
+            broadcastSect.classList.add('hidden');
+        }
+    }
+    
+    openModal('settings-modal');
+  });
+}
 
 document.getElementById('update-profile-btn').addEventListener('click', async () => {
   const newName = document.getElementById('settings-name-input').value.trim();
@@ -1174,11 +1262,13 @@ updatePwBtn.addEventListener('click', async () => {
 // ==========================================
 // --- ROLE-BASED ADMIN PANEL LOGIC ---
 // ==========================================
-
-document.getElementById('open-admin-btn').addEventListener('click', () => {
-  openModal('admin-modal');
-  loadAdminDashboard();
-});
+const navAdminPanelBtn = document.getElementById('nav-admin-panel-btn');
+if (navAdminPanelBtn) {
+  navAdminPanelBtn.addEventListener('click', () => {
+    openModal('admin-modal');
+    loadAdminDashboard();
+  });
+}
 
 async function loadAdminDashboard() {
   const isSuper = activeRole === 'super_admin';
@@ -1395,7 +1485,6 @@ window.inviteCollaborator = async (email, role) => {
 };
 
 // Run this when the page loads
-// Run this when the page loads
 window.addEventListener('DOMContentLoaded', () => {
     const urlParams = new URLSearchParams(window.location.search);
     const joinCode = urlParams.get('join_code');
@@ -1415,7 +1504,7 @@ window.addEventListener('DOMContentLoaded', () => {
         const appSection = document.getElementById('app-section');
         if (appSection) appSection.classList.add('hidden');
 
-        // 2. Show the secure setup view (Fixed: changed 'none' to 'block')
+        // 2. Show the secure setup view
         const setupView = document.getElementById('setup-password-view');
         if (setupView) {
             setupView.style.display = 'block';
@@ -1537,42 +1626,45 @@ function initPasswordValidation() {
     });
 }
 // --- ADMIN BROADCAST PIPELINE ---
-document.getElementById('send-broadcast-btn')?.addEventListener('click', async () => {
-    const content = document.getElementById('broadcast-input').value.trim();
-    const expiryDays = document.getElementById('broadcast-expiry').value;
-    const msgEl = document.getElementById('broadcast-msg');
+const sendBroadcastBtn = document.getElementById('send-broadcast-btn');
+if (sendBroadcastBtn) {
+    sendBroadcastBtn.addEventListener('click', async () => {
+        const content = document.getElementById('broadcast-input').value.trim();
+        const expiryDays = document.getElementById('broadcast-expiry').value;
+        const msgEl = document.getElementById('broadcast-msg');
 
-    if (!content) return;
+        if (!content) return;
 
-    msgEl.style.color = "var(--text-main)";
-    msgEl.textContent = "Broadcasting...";
+        msgEl.style.color = "var(--text-main)";
+        msgEl.textContent = "Broadcasting...";
 
-    // Calculate Expiry Timestamp
-    let expiresAt = null;
-    if (expiryDays !== 'never') {
-        const date = new Date();
-        date.setDate(date.getDate() + parseInt(expiryDays));
-        expiresAt = date.toISOString();
-    }
+        // Calculate Expiry Timestamp
+        let expiresAt = null;
+        if (expiryDays !== 'never') {
+            const date = new Date();
+            date.setDate(date.getDate() + parseInt(expiryDays));
+            expiresAt = date.toISOString();
+        }
 
-    const { error } = await supabase.from('messages').insert([{
-        project_id: null, 
-        user_id: currentUser.id,
-        org_id: activeOrgId,
-        content: content,
-        expires_at: expiresAt
-    }]);
+        const { error } = await supabase.from('messages').insert([{
+            project_id: null, 
+            user_id: currentUser.id,
+            org_id: activeOrgId,
+            content: content,
+            expires_at: expiresAt
+        }]);
 
-    if (error) {
-        msgEl.style.color = "var(--danger)";
-        msgEl.textContent = error.message;
-    } else {
-        msgEl.style.color = "var(--success)";
-        msgEl.textContent = "Broadcast published to workspace!";
-        document.getElementById('broadcast-input').value = '';
-        fetchMessages(); // Auto-refresh the view
-        setTimeout(() => msgEl.textContent = '', 2000);
-    }
-});
+        if (error) {
+            msgEl.style.color = "var(--danger)";
+            msgEl.textContent = error.message;
+        } else {
+            msgEl.style.color = "var(--success)";
+            msgEl.textContent = "Broadcast published to workspace!";
+            document.getElementById('broadcast-input').value = '';
+            fetchMessages(); // Auto-refresh the view
+            setTimeout(() => msgEl.textContent = '', 2000);
+        }
+    });
+}
 
 checkSession();

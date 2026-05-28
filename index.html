@@ -104,56 +104,123 @@
     .req-unmet { color: var(--text-muted); }
     .req-met { color: var(--success); transform: translateX(5px); font-weight: bold; }
 
-/* --- DASHBOARD GRID & CARD STYLES --- */
-.dashboard-layout { display: flex; flex-direction: column; gap: 20px; }
+    /* --- DASHBOARD GRID & CARD STYLES --- */
+    .dashboard-layout { display: flex; flex-direction: column; gap: 20px; }
 
-/* Switched from Grid to Columns to create a tight Masonry layout */
-.dashboard-layout.grid-mode { display: block; column-gap: 20px; }
+    /* Switched from Grid to Columns to create a tight Masonry layout */
+    .dashboard-layout.grid-mode { display: block; column-gap: 20px; }
 
-/* Column Options */
-.dashboard-layout.grid-mode.cols-1 { column-count: 1; }
-.dashboard-layout.grid-mode.cols-2 { column-count: 2; }
-.dashboard-layout.grid-mode.cols-3 { column-count: 3; }
+    /* Column Options */
+    .dashboard-layout.grid-mode.cols-1 { column-count: 1; }
+    .dashboard-layout.grid-mode.cols-2 { column-count: 2; }
+    .dashboard-layout.grid-mode.cols-3 { column-count: 3; }
 
-.dash-card {
-  background: var(--surface-color);
-  border: 1px solid var(--border-color);
-  border-radius: 8px;
-  
-  /* NEW: Prevents the cards from splitting in half across columns */
-  display: inline-flex;
-  width: 100%;
-  break-inside: avoid;
-  page-break-inside: avoid;
-  margin-bottom: 20px;
-  
-  flex-direction: column;
-  overflow: hidden;
-  box-shadow: 0 4px 6px rgba(0,0,0,0.2);
-  resize: vertical; 
-  min-height: 200px;
-}
+    .dash-card {
+      background: var(--surface-color);
+      border: 1px solid var(--border-color);
+      border-radius: 8px;
+      
+      display: inline-flex;
+      width: 100%;
+      break-inside: avoid;
+      page-break-inside: avoid;
+      margin-bottom: 20px;
+      
+      flex-direction: column;
+      overflow: hidden;
+      box-shadow: 0 4px 6px rgba(0,0,0,0.2);
+      resize: vertical; 
+      min-height: 200px;
+    }
 
-.drag-handle {
-  background: var(--surface-light);
-  padding: 10px 15px;
-  border-bottom: 1px solid var(--border-color);
-  font-weight: bold;
-  cursor: grab;
-  display: flex;
-  justify-content: space-between;
-  align-items: center;
-}
-.drag-handle:active { cursor: grabbing; }
+    .drag-handle {
+      background: var(--surface-light);
+      padding: 10px 15px;
+      border-bottom: 1px solid var(--border-color);
+      font-weight: bold;
+      cursor: grab;
+      display: flex;
+      justify-content: space-between;
+      align-items: center;
+    }
+    .drag-handle:active { cursor: grabbing; }
 
-.card-content {
-  padding: 15px;
-  overflow-y: auto; 
-  flex: 1;
-}
+    .card-content {
+      padding: 15px;
+      overflow-y: auto; 
+      flex: 1;
+    }
 
+    /* --- APP SHELL LAYOUT --- */
+    .app-layout { 
+      display: flex; 
+      height: 100vh;
+      overflow: hidden; 
+      background: var(--bg-color);
+    }
+    
+    /* Side Navigation */
+    .side-nav { 
+      width: 240px; 
+      background: var(--surface-color); 
+      border-right: 1px solid var(--border-color); 
+      display: flex; 
+      flex-direction: column; 
+      justify-content: space-between; 
+      padding: 20px 15px; 
+    }
+    .side-nav-group { display: flex; flex-direction: column; gap: 10px; }
+    .side-nav button { 
+      width: 100%; text-align: left; padding: 10px 15px; 
+      background: transparent; border: 1px solid transparent; 
+      color: var(--text-main); border-radius: 6px; 
+      transition: 0.2s;
+    }
+    .side-nav button:hover { background: var(--surface-light); border-color: var(--border-color); }
+    .side-nav button.create-btn { background: var(--primary-color); color: #000; font-weight: bold; }
+    .side-nav button.create-btn:hover { background: #00d66a; }
 
+    /* Main Content Area */
+    .main-content { 
+      flex: 1; 
+      display: flex; 
+      flex-direction: column; 
+      overflow: hidden; 
+    }
+    
+    /* Top Navigation */
+    .top-nav { 
+      display: flex; 
+      justify-content: space-between; 
+      align-items: center; 
+      padding: 10px 20px; 
+      background: var(--surface-color); 
+      border-bottom: 1px solid var(--border-color); 
+      min-height: 70px;
+    }
+    .nav-left, .nav-center, .nav-right { display: flex; align-items: center; gap: 15px; }
+    
+    .brand-logo { display: flex; align-items: center; margin-right: 15px;}
+    .nav-dropdown { margin: 0; min-width: 160px; padding: 6px 10px;}
+    
+    .nav-center h2 { margin: 0; font-size: 18px; color: var(--text-main); font-weight: 600; }
+    
+    /* User Profile Badge */
+    .user-profile-badge { display: flex; align-items: center; gap: 12px; border-right: 1px solid var(--border-color); padding-right: 15px; margin-right: 5px; }
+    .user-info-text { display: flex; flex-direction: column; text-align: right; line-height: 1.2; }
+    .user-name { font-weight: bold; font-size: 14px; }
+    .user-email { font-size: 11px; color: var(--text-muted); margin-bottom: 3px; }
+    .user-role-label { font-size: 9px; text-transform: uppercase; letter-spacing: 0.5px; padding: 2px 6px; border-radius: 4px; background: var(--surface-light); border: 1px solid var(--border-color); width: fit-content; align-self: flex-end; color: var(--text-muted); }
+    
+    .user-avatar { 
+      width: 42px; height: 42px; border-radius: 50%; 
+      background: var(--primary-color); color: #000; 
+      display: flex; align-items: center; justify-content: center; 
+      font-weight: bold; font-size: 18px; text-transform: uppercase;
+    }
 
+    /* Scrollable Dashboard Canvas */
+    .dashboard-scroll-area { flex: 1; overflow-y: auto; padding: 20px; }
   </style>
 </head>
 <body>
@@ -187,91 +254,180 @@
     </div>
   </div>
 
-  <div id="app-section" class="container hidden">
-    <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 30px;">
-      <img src="https://fieldhub.uk/assets/images/fieldhub-logo-transparent.png" alt="Logo" style="height: 150px;">
-      <div style="display: flex; gap: 10px; align-items: center; flex-wrap: wrap;">
-        
-        <select id="workspace-select" style="margin: 0; min-width: 180px; background: var(--surface-light); border-color: var(--success); color: var(--success); font-weight: bold;"></select>
-        
-        <select id="global-project-select" style="margin: 0; min-width: 180px; background: var(--surface-light); border-color: var(--primary-color);">
-          <option value="all">All Projects</option>
-        </select>
-        
-        <button id="open-proj-modal-btn" class="secondary-btn">＋ Project</button>
-        <button id="open-task-modal-btn">＋ New Task</button>
-        <button id="open-cat-modal-btn" class="secondary-btn">🏷️ Categories</button>
-        <button id="open-admin-btn" class="secondary-btn hidden">🛡️ Admin Panel</button>
-        <button id="open-settings-btn" class="secondary-btn">⚙ Settings</button>
-        <button id="logout-btn" class="danger-btn">Logout</button>
-      </div>
+  <div id="setup-password-view" style="display: none; max-width: 450px; margin: 60px auto; background: var(--surface-light); padding: 30px; border-radius: 12px; border: 1px solid var(--border-color); box-shadow: 0 4px 6px rgba(0,0,0,0.1);">
+    <h2 style="margin-top: 0; color: var(--text-color);">Complete Your Sign Up</h2>
+    <p style="color: var(--text-muted); margin-bottom: 25px;">Please secure your account to join the workspace.</p>
+
+    <div style="margin-bottom: 15px;">
+        <label style="display: block; font-size: 14px; margin-bottom: 5px;">Workspace Join Code</label>
+        <input type="text" id="setup-join-code" readonly style="width: 100%; padding: 10px; background: var(--bg-color); color: var(--text-muted); border: 1px solid var(--border-color); border-radius: 6px; cursor: not-allowed; font-family: monospace; font-size: 16px;" />
     </div>
 
-    <div style="display: flex; gap: 15px; margin-bottom: 20px; background: var(--surface-light); padding: 10px; border-radius: 8px; align-items: center;">
-      <span style="font-weight: bold; color: var(--text-muted);">Dashboard Layout:</span>
-      <select id="layout-mode" style="margin: 0; min-width: 150px;">
-        <option value="stacked">Stacked List</option>
-        <option value="grid">Card Grid</option>
-      </select>
-      <select id="grid-columns" class="hidden" style="margin: 0; min-width: 150px;">
-        <option value="1">1 Column</option>
-        <option value="2" selected>2 Columns</option>
-        <option value="3">3 Columns</option>
-      </select>
-       <label style="display: flex; align-items: center; gap: 8px; cursor: pointer; color: var(--text-muted); font-size: 14px; margin: 0;">
-              <label class="switch"><input type="checkbox" id="visibility-toggle" checked><span class="slider"></span></label>
-              <span id="visibility-label">Show Completed</span>
-            </label>
+    <div style="margin-bottom: 15px;">
+        <label style="display: block; font-size: 14px; margin-bottom: 5px;">New Password</label>
+        <input type="password" id="setup-password" placeholder="••••••••" style="width: 100%; padding: 10px; border: 1px solid var(--border-color); border-radius: 6px; background: var(--bg-color); color: var(--text-color);" />
     </div>
 
-    <div id="dashboard-canvas" class="dashboard-layout stacked-mode">
+    <div style="margin-bottom: 20px;">
+        <label style="display: block; font-size: 14px; margin-bottom: 5px;">Confirm Password</label>
+        <input type="password" id="setup-confirm-password" placeholder="••••••••" style="width: 100%; padding: 10px; border: 1px solid var(--border-color); border-radius: 6px; background: var(--bg-color); color: var(--text-color);" />
+    </div>
+
+    <div style="font-size: 13px; font-weight: bold; margin-bottom: 20px; display: flex; flex-direction: column; gap: 6px;">
+        <span id="setup-req-length" style="color: #ef4444;">✗ Minimum 6 characters</span>
+        <span id="setup-req-upper" style="color: #ef4444;">✗ One uppercase letter</span>
+        <span id="setup-req-num" style="color: #ef4444;">✗ One number</span>
+        <span id="setup-req-sym" style="color: #ef4444;">✗ One symbol (@$!%*?&)</span>
+        <span id="setup-req-match" style="color: #ef4444;">✗ Passwords match</span>
+    </div>
+
+    <button id="setup-submit-btn" class="primary-btn" style="width: 100%; padding: 12px; font-size: 16px; opacity: 0.5; cursor: not-allowed;" disabled>
+        Add Password & Join Workspace
+    </button>
+  </div>
+
+
+  <div id="app-section" class="hidden">
+    <div class="app-layout">
       
-      <div class="dash-card" data-id="card-my-tasks">
-        <div class="drag-handle">
-          <span>🎯 My Tasks & Group Tasks</span>
-          <span style="color: var(--text-muted); cursor: pointer;" title="Drag to move">⋮⋮</span>
+      <nav class="side-nav">
+        <div class="side-nav-group">
+          <button id="nav-new-task-btn" class="create-btn">+ New Task</button>
+          <button id="nav-new-project-btn" class="admin-only hidden">+ New Project</button>
+          <button id="nav-categories-btn">🏷️ Categories</button>
         </div>
-        <div class="card-content">
-          <div class="filters-bar" style="margin-bottom: 15px;">
-            <div class="search-wrapper"><input type="text" id="search-my" placeholder="Search..." /><button class="search-clear" onclick="clearSearch('search-my')">✖</button></div>
-            <select id="filter-priority-my" style="margin: 0;"><option value="All">All Priorities</option><option value="High">High</option><option value="Medium">Medium</option><option value="Low">Low</option></select>
-            <select id="sort-my" style="margin: 0;"><option value="newest">Newest First</option><option value="highest">Priority: High to Low</option></select>
-          </div>
-          <div id="my-task-list" style="display: flex; flex-direction: column; gap: 10px;"></div>
+        
+        <div class="side-nav-group">
+          <button id="nav-admin-panel-btn" class="admin-only hidden">🛡️ Admin Panel</button>
+          <button id="nav-settings-btn">⚙️ Settings</button>
         </div>
-      </div>
+      </nav>
 
-      <div class="dash-card" data-id="card-all-tasks">
-        <div class="drag-handle">
-          <span>📋 All Project Tasks</span>
-          <span style="color: var(--text-muted); cursor: pointer;" title="Drag to move">⋮⋮</span>
-        </div>
-        <div class="card-content">
-          <div class="filters-bar" style="margin-bottom: 15px;">
-            <div class="search-wrapper"><input type="text" id="search-all" placeholder="Search..." /><button class="search-clear" onclick="clearSearch('search-all')">✖</button></div>
-            <select id="filter-user-all" style="margin: 0;"><option value="All">All Users</option></select>
-            <select id="filter-priority-all" style="margin: 0;"><option value="All">All Priorities</option><option value="High">High</option><option value="Medium">Medium</option><option value="Low">Low</option></select>
-            <select id="sort-all" style="margin: 0;"><option value="newest">Newest First</option><option value="highest">Priority: High to Low</option></select>
+      <main class="main-content">
+        
+        <header class="top-nav" style="padding: 8px 20px; min-height: 60px;">
+          <div class="nav-left">
+            <div class="brand-logo" style="position: relative; width: 150px; height: 40px; margin-right: 15px;">
+              <img src="https://fieldhub.uk/assets/images/fieldhub-logo-transparent.png" alt="FieldHub Logo" style="position: absolute; top: 50%; left: 0; transform: translateY(-50%); width: 100px; height: auto; max-height: none; z-index: 100;">
+            </div>
+            
+            <!-- Stacked Dropdowns -->
+            <div style="display: flex; flex-direction: column; gap: 4px;">
+              <select id="active-org-select" class="nav-dropdown" style="margin: 0; padding: 2px 8px; font-size: 12px; min-width: 180px;"></select>
+              <select id="global-project-select" class="nav-dropdown" style="margin: 0; padding: 2px 8px; font-size: 12px; min-width: 180px;">
+                <option value="all">All Projects</option>
+              </select>
+            </div>
           </div>
-          <div id="all-task-list" style="display: flex; flex-direction: column; gap: 10px;"></div>
-        </div>
-      </div>
-
-      <div class="dash-card" data-id="card-chat">
-        <div class="drag-handle">
-          <span id="chat-card-title">💬 Project Chat & Updates</span>
-          <span style="color: var(--text-muted); cursor: pointer;" title="Drag to move">⋮⋮</span>
-        </div>
-        <div class="card-content" style="display: flex; flex-direction: column;">
-          <div id="message-list" style="flex: 1; min-height: 200px; overflow-y: auto; background: var(--surface-light); padding: 15px; border-radius: 8px; margin-bottom: 10px; display: flex; flex-direction: column; gap: 10px;"></div>
-          <div id="chat-input-area" style="display: flex; gap: 10px;">
-            <input type="text" id="new-msg-input" placeholder="Type a message..." style="margin: 0; flex: 1;" />
-            <button id="send-msg-btn">Send</button>
+          
+          <div class="nav-center">
+            <h2 id="top-nav-org-name" style="margin: 0;">Workspace</h2>
           </div>
-        </div>
-      </div>
+          
+          <div class="nav-right">
+            <div class="user-profile-badge">
+              <div class="user-info-text">
+                <span id="nav-user-name" class="user-name">Loading...</span>
+                <span id="nav-user-email" class="user-email"></span>
+                <span id="nav-user-role" class="user-role-label"></span>
+              </div>
+              <div id="nav-user-avatar" class="user-avatar">?</div>
+            </div>
+            <button id="logout-btn" class="danger-btn" style="padding: 6px 12px; margin: 0;">Logout</button>
+          </div>
+        </header>
 
+        <div class="dashboard-scroll-area">
+
+          <div style="display: flex; gap: 15px; margin-bottom: 20px; background: var(--surface-light); padding: 10px; border-radius: 8px; align-items: center; flex-wrap: wrap;">
+            <span style="font-weight: bold; color: var(--text-muted);">Layout:</span>
+            <select id="layout-mode" style="margin: 0; min-width: 120px;">
+              <option value="stacked">Stacked List</option>
+              <option value="grid">Card Grid</option>
+            </select>
+            <select id="grid-columns" class="hidden" style="margin: 0; min-width: 120px;">
+              <option value="1">1 Column</option>
+              <option value="2" selected>2 Columns</option>
+              <option value="3">3 Columns</option>
+            </select>
+
+            <span style="font-weight: bold; color: var(--text-muted); margin-left: 10px;">Filters:</span>
+            <select id="global-filter-priority" style="margin: 0; min-width: 120px;">
+              <option value="All">All Priorities</option>
+              <option value="High">High</option>
+              <option value="Medium">Medium</option>
+              <option value="Low">Low</option>
+            </select>
+            <select id="global-sort" style="margin: 0; min-width: 120px;">
+              <option value="newest">Newest First</option>
+              <option value="highest">Priority: High to Low</option>
+            </select>
+
+            <div style="margin-left: auto; display: flex; align-items: center; gap: 8px;">
+              <label class="switch" style="margin: 0;">
+                <input type="checkbox" id="visibility-toggle" checked>
+                <span class="slider"></span>
+              </label>
+              <span id="visibility-label" style="color: var(--text-muted); font-size: 14px; cursor: pointer;">Show Completed</span>
+            </div>
+          </div>
+
+          <div id="dashboard-canvas" class="dashboard-layout stacked-mode">
+            
+            <div class="dash-card" data-id="card-my-tasks">
+              <div class="drag-handle" style="display: flex; justify-content: space-between; align-items: center; gap: 10px;">
+                <span style="white-space: nowrap;">🎯 My Tasks</span>
+                <div class="search-wrapper" style="flex: 1; max-width: 250px; margin: 0 10px;">
+                  <input type="text" id="search-my" placeholder="Search..." style="margin: 0; width: 100%; padding: 4px 8px;" />
+                  <button class="search-clear" onclick="clearSearch('search-my')" style="right: 5px; top: 50%; transform: translateY(-50%);">✖</button>
+                </div>
+                <span style="color: var(--text-muted); cursor: pointer;" title="Drag to move">⋮⋮</span>
+              </div>
+              <div class="card-content">
+                <div id="my-task-list" style="display: flex; flex-direction: column; gap: 10px;"></div>
+              </div>
+            </div>
+
+            <div class="dash-card" data-id="card-all-tasks">
+              <div class="drag-handle" style="display: flex; justify-content: space-between; align-items: center; gap: 10px;">
+                <span style="white-space: nowrap;">📋 All Tasks</span>
+                
+                <select id="filter-user-all" style="margin: 0; padding: 4px 8px; max-width: 140px;">
+                  <option value="All">All Users</option>
+                </select>
+
+                <div class="search-wrapper" style="flex: 1; max-width: 200px; margin: 0;">
+                  <input type="text" id="search-all" placeholder="Search..." style="margin: 0; width: 100%; padding: 4px 8px;" />
+                  <button class="search-clear" onclick="clearSearch('search-all')" style="right: 5px; top: 50%; transform: translateY(-50%);">✖</button>
+                </div>
+                <span style="color: var(--text-muted); cursor: pointer;" title="Drag to move">⋮⋮</span>
+              </div>
+              <div class="card-content">
+                <div id="all-task-list" style="display: flex; flex-direction: column; gap: 10px;"></div>
+              </div>
+            </div>
+
+            <div class="dash-card" data-id="card-chat">
+              <div class="drag-handle">
+                <span id="chat-card-title">💬 Project Chat & Updates</span>
+                <span style="color: var(--text-muted); cursor: pointer;" title="Drag to move">⋮⋮</span>
+              </div>
+              <div class="card-content" style="display: flex; flex-direction: column;">
+                <div id="message-list" style="flex: 1; min-height: 200px; overflow-y: auto; background: var(--surface-light); padding: 15px; border-radius: 8px; margin-bottom: 10px; display: flex; flex-direction: column; gap: 10px;"></div>
+                <div id="chat-input-area" style="display: flex; gap: 10px;">
+                  <input type="text" id="new-msg-input" placeholder="Type a message..." style="margin: 0; flex: 1;" />
+                  <button id="send-msg-btn">Send</button>
+                </div>
+              </div>
+            </div>
+
+          </div>
+        
+        </div> 
+      </main>
     </div>
+  </div>
+
 
   <div id="task-modal" class="modal-overlay">
     <div class="modal-content">
@@ -431,39 +587,6 @@
       </div>
     </div>
   </div>
-
-  <div id="setup-password-view" style="display: none; max-width: 450px; margin: 60px auto; background: var(--surface-light); padding: 30px; border-radius: 12px; border: 1px solid var(--border-color); box-shadow: 0 4px 6px rgba(0,0,0,0.1);">
-    <h2 style="margin-top: 0; color: var(--text-color);">Complete Your Sign Up</h2>
-    <p style="color: var(--text-muted); margin-bottom: 25px;">Please secure your account to join the workspace.</p>
-
-    <div style="margin-bottom: 15px;">
-        <label style="display: block; font-size: 14px; margin-bottom: 5px;">Workspace Join Code</label>
-        <input type="text" id="setup-join-code" readonly style="width: 100%; padding: 10px; background: var(--bg-color); color: var(--text-muted); border: 1px solid var(--border-color); border-radius: 6px; cursor: not-allowed; font-family: monospace; font-size: 16px;" />
-    </div>
-
-    <div style="margin-bottom: 15px;">
-        <label style="display: block; font-size: 14px; margin-bottom: 5px;">New Password</label>
-        <input type="password" id="setup-password" placeholder="••••••••" style="width: 100%; padding: 10px; border: 1px solid var(--border-color); border-radius: 6px; background: var(--bg-color); color: var(--text-color);" />
-    </div>
-
-    <div style="margin-bottom: 20px;">
-        <label style="display: block; font-size: 14px; margin-bottom: 5px;">Confirm Password</label>
-        <input type="password" id="setup-confirm-password" placeholder="••••••••" style="width: 100%; padding: 10px; border: 1px solid var(--border-color); border-radius: 6px; background: var(--bg-color); color: var(--text-color);" />
-    </div>
-
-    <div style="font-size: 13px; font-weight: bold; margin-bottom: 20px; display: flex; flex-direction: column; gap: 6px;">
-        <span id="setup-req-length" style="color: #ef4444;">✗ Minimum 6 characters</span>
-        <span id="setup-req-upper" style="color: #ef4444;">✗ One uppercase letter</span>
-        <span id="setup-req-num" style="color: #ef4444;">✗ One number</span>
-        <span id="setup-req-sym" style="color: #ef4444;">✗ One symbol (@$!%*?&)</span>
-        <span id="setup-req-match" style="color: #ef4444;">✗ Passwords match</span>
-    </div>
-
-    <button id="setup-submit-btn" class="primary-btn" style="width: 100%; padding: 12px; font-size: 16px; opacity: 0.5; cursor: not-allowed;" disabled>
-        Add Password & Join Workspace
-    </button>
-</div>
-
 
   <script type="module" src="/main.js"></script>
 </body>
