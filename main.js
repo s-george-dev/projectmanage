@@ -5,7 +5,7 @@ const supabaseKey = 'sb_publishable_4opExcpgvIsblEQjDfqB3A_VMlCVNdG';
 const supabase = createClient(supabaseUrl, supabaseKey);
 
 let currentUser = null;
-let currentUserProfile = null; // FIXED: This variable is required for Settings to open
+let currentUserProfile = null; 
 let allTasksData = [];
 let allProjectsData = [];
 let pendingFiles = []; 
@@ -32,15 +32,11 @@ let notifPrefs = JSON.parse(localStorage.getItem('fieldhub_notifs')) || {
 
 let allProfiles = [];
 
-// This tool watches the screen and removes the green pulse when a task scrolls into view
 const viewportObserver = new IntersectionObserver((entries) => {
   entries.forEach(entry => {
     if (entry.isIntersecting) {
       const el = entry.target;
-      // The ID looks like "my-task-UUID". We split it to get the raw UUID.
       const rawId = el.id.replace('my-task-', '').replace('all-task-', '');
-      
-      // If it's been seen, remove from memory, stop pulsing, and stop watching it
       if (unseenTaskIds.has(rawId)) {
         unseenTaskIds.delete(rawId);
         el.classList.remove('unseen-task');
@@ -48,35 +44,127 @@ const viewportObserver = new IntersectionObserver((entries) => {
       }
     }
   });
-}, { threshold: 0.5 }); // Triggers when 50% of the task is visible
+}, { threshold: 0.5 }); 
 
-
-// --- INIT & AUTH ---
+// --- INIT & MULTI-TENANCY VERIFICATION ---
+// --- INIT, AUTH & MULTI-TENANCY VERIFICATION ---
 async function checkSession() {
   const { data: { session } } = await supabase.auth.getSession();
+  
   if (session) {
     currentUser = session.user;
-    const authSect = document.getElementById('auth-section');
-    const appSect = document.getElementById('app-section');
-    if (authSect && appSect) {
-      authSect.classList.add('hidden');
-      appSect.classList.remove('hidden');
-      loadAppData();
-      setupRealtime(); 
-      
-      if (Notification.permission === 'default') {
-        Notification.requestPermission();
+    
+    try {
+      // Fetch the profile exactly ONE time
+      const { data: profile, error } = await supabase.from('profiles').select('*').eq('id', currentUser.id).maybeSingle();
+
+      if (error) console.error("Profile Fetch Error:", error.message);
+
+      const authSect = document.getElementById('auth-section');
+      const appSect = document.getElementById('app-section');
+      const orgModal = document.getElementById('org-modal');
+
+      // 1. Check for Bans first
+      if (profile?.is_banned) {
+        alert("Your account has been suspended. Please contact your administrator.");
+        await supabase.auth.signOut();
+        return location.reload();
       }
+
+      // 2. Check for missing Organization (The Lock Screen)
+      if (!profile || !profile.org_id) {
+        if (authSect) authSect.classList.add('hidden');
+        if (appSect) appSect.classList.add('hidden');
+        
+        if (orgModal) {
+          orgModal.classList.add('active');
+        } else {
+          console.error("CRITICAL: You are missing the <div id='org-modal'> in your index.html!");
+          alert("Error: Missing Organization Modal HTML. Check console F12.");
+        }
+      } 
+      // 3. Let them into the app!
+      else {
+        currentUserProfile = profile;
+        
+        // REVEAL ADMIN BUTTON IF AUTHORIZED
+        if (currentUserProfile.role === 'super_admin' || currentUserProfile.role === 'general_admin') {
+          const adminBtn = document.getElementById('open-admin-btn');
+          if (adminBtn) {
+            adminBtn.classList.remove('hidden');
+          } else {
+            console.warn("Notice: You are an Admin, but the 'open-admin-btn' is missing from index.html.");
+          }
+        }
+
+        if (authSect) authSect.classList.add('hidden');
+        if (orgModal) orgModal.classList.remove('active');
+        if (appSect) appSect.classList.remove('hidden');
+        
+        loadAppData();
+        setupRealtime(); 
+        
+        if (Notification.permission === 'default') {
+          Notification.requestPermission();
+        }
+      }
+    } catch (err) {
+      console.error("Crash during login sequence:", err);
     }
   }
 }
 
+// Verification Gatehouse Handler
+document.getElementById('verify-org-btn').addEventListener('click', async () => {
+  const code = document.getElementById('org-code-input').value.trim();
+  const msg = document.getElementById('org-msg');
+  if(!code) return msg.textContent = "Please enter an Organisation ID.";
+
+  msg.style.color = "var(--text-main)";
+  msg.textContent = "Verifying...";
+
+  const { data: org } = await supabase.from('organizations').select('id').eq('join_code', code).maybeSingle();
+
+  if(!org) {
+    msg.style.color = "var(--danger)";
+    return msg.textContent = "Invalid Organisation ID. Access Denied.";
+  }
+
+  const { error } = await supabase.from('profiles').upsert({
+    id: currentUser.id,
+    full_name: currentUser.user_metadata?.full_name || currentUser.email.split('@')[0],
+    org_id: org.id
+  });
+
+  if(error) {
+    msg.style.color = "var(--danger)";
+    return msg.textContent = error.message;
+  }
+
+  location.reload();
+});
+
+document.getElementById('org-logout-btn').addEventListener('click', async () => {
+  await supabase.auth.signOut();
+  location.reload();
+});
+
 document.getElementById('login-btn').addEventListener('click', async () => {
   const email = document.getElementById('email').value;
   const password = document.getElementById('password').value;
-  const { data, error } = await supabase.auth.signInWithPassword({ email, password });
+  const { error } = await supabase.auth.signInWithPassword({ email, password });
   if (error) return alert(error.message);
   location.reload();
+});
+
+document.getElementById('google-login-btn').addEventListener('click', async () => {
+  const { error } = await supabase.auth.signInWithOAuth({
+    provider: 'google',
+    options: {
+      redirectTo: window.location.origin + window.location.pathname
+    }
+  });
+  if (error) alert("Google Connection Interrupted: " + error.message);
 });
 
 document.getElementById('logout-btn').addEventListener('click', async () => {
@@ -84,21 +172,17 @@ document.getElementById('logout-btn').addEventListener('click', async () => {
   location.reload();
 });
 
-// --- REALTIME & NOTIFICATION ENGINE ---
+// --- REALTIME ENGINE ---
 function setupRealtime() {
   const channel = supabase.channel('fieldhub-sync');
-  
-  // NEW: Flag to track if the initial burst of online users has finished loading
   let presenceInitialized = false; 
 
-  // 1. Listen for Database Changes
   channel
     .on('postgres_changes', { event: '*', schema: 'public', table: 'projects' }, fetchProjects)
     
-    // Intercept Messages
     .on('postgres_changes', { event: 'INSERT', schema: 'public', table: 'messages' }, (payload) => {
       fetchMessages();
-      if (payload.new.user_id !== currentUser.id && notifPrefs.newMsg && Notification.permission === 'granted') {
+      if (payload.new.user_id !== currentUser.id && payload.new.org_id === currentUserProfile.org_id && notifPrefs.newMsg && Notification.permission === 'granted') {
         new Notification("New Message", { 
           body: payload.new.content, 
           icon: "https://fieldhub.uk/assets/images/favicon-transparent.png",
@@ -107,21 +191,17 @@ function setupRealtime() {
       }
     })
 
-    // Intercept Tasks
-
-    // Intercept Tasks
     .on('postgres_changes', { event: '*', schema: 'public', table: 'tasks' }, async (payload) => {
       await fetchTasks();
-      
       if (Notification.permission !== 'granted') return;
 
       const isMine = payload.new?.user_id === currentUser.id || payload.old?.user_id === currentUser.id;
+      const targetOrg = payload.new?.org_id || payload.old?.org_id;
+      if (targetOrg !== currentUserProfile.org_id) return;
 
       if (payload.eventType === 'INSERT') {
-        if (isMine) return; // Don't notify the creator
-
+        if (isMine) return; 
         const creatorName = allProfiles.find(p => p.id === payload.new.user_id)?.full_name || 'A teammate';
-        
         unseenTaskIds.add(payload.new.id);
         renderTasks(); 
         
@@ -151,43 +231,27 @@ function setupRealtime() {
       }
     })
 
-    // 2. Listen for Presence (User Logins)
     .on('presence', { event: 'join' }, ({ newPresences }) => {
       if (notifPrefs.login && Notification.permission === 'granted') {
         const myName = currentUserProfile?.full_name || currentUser.user_metadata?.full_name || "A Teammate";
-        
         newPresences.forEach(userState => {
           if (userState.user_name && userState.user_name !== myName) {
-             
-             // Check the flag to determine the correct phrasing
              const actionText = presenceInitialized ? "just logged in. 👨‍💻" : "is online. 🌐";
-             
-             new Notification("Teammate Status", { 
-                 body: `${userState.user_name} ${actionText}` 
-             });
+             new Notification("Teammate Status", { body: `${userState.user_name} ${actionText}` });
           }
         });
       }
     })
     .subscribe(async (status) => {
       if (status === 'SUBSCRIBED') {
-        
         const broadcastName = currentUserProfile?.full_name || currentUser.user_metadata?.full_name || "A Teammate";
-        
-        await channel.track({ 
-          user_name: broadcastName,
-          online_at: new Date().toISOString() 
-        });
-
-        // After connecting, wait 1 second for the initial room data to process, then flip the flag
-        setTimeout(() => {
-            presenceInitialized = true;
-        }, 1000);
+        await channel.track({ user_name: broadcastName, online_at: new Date().toISOString() });
+        setTimeout(() => { presenceInitialized = true; }, 1000);
       }
     });
 }
 
-// --- FETCH DATA ---
+// --- SECURED FETCH PIPELINES ---
 async function loadAppData() {
   await fetchProjects();
   await fetchCategories();
@@ -197,22 +261,19 @@ async function loadAppData() {
 }
 
 async function fetchProjects() {
-  const { data } = await supabase.from('projects').select('*').order('name');
+  const { data } = await supabase.from('projects').select('*').eq('org_id', currentUserProfile.org_id).order('name');
   if (data) {
     allProjectsData = data;
     const options = data.map(p => `<option value="${p.id}">${p.name}</option>`).join('');
     document.getElementById('global-project-select').innerHTML = '<option value="all">All Projects</option>' + options;
     document.getElementById('task-project-select').innerHTML = options;
-    
-    // Default project dropdown for settings
     document.getElementById('settings-default-project').innerHTML = '<option value="all">Show All Projects on Startup</option>' + options;
-    
     document.getElementById('global-project-select').value = activeGlobalProjectId;
   }
 }
 
 async function fetchCategories() {
-  const { data } = await supabase.from('categories').select('*').order('name');
+  const { data } = await supabase.from('categories').select('*').eq('org_id', currentUserProfile.org_id).order('name');
   if (data) {
     document.getElementById('category-select').innerHTML = '<option value="">Category...</option>' + data.map(c => `<option value="${c.id}">${c.name}</option>`).join('');
     document.getElementById('category-list').innerHTML = data.map(c => `
@@ -224,15 +285,13 @@ async function fetchCategories() {
 }
 
 async function fetchProfiles() {
-  const { data } = await supabase.from('profiles').select('*');
+  const { data } = await supabase.from('profiles').select('*').eq('org_id', currentUserProfile.org_id);
   if (data) {
-    allProfiles = data; // Cache profiles for instant name lookups
-
+    allProfiles = data; 
     const options = data.map(p => `<option value="${p.id}">${p.full_name}</option>`).join('');
     document.getElementById('assignee-select').innerHTML = '<option value="">Unassigned</option><option value="ALL">Group Task (All)</option>' + options;
     document.getElementById('filter-user-all').innerHTML = '<option value="All">All Users</option>' + options;
     
-    currentUserProfile = data.find(p => p.id === currentUser.id);
     if (currentUserProfile && currentUserProfile.default_project && activeGlobalProjectId === 'all') {
         activeGlobalProjectId = currentUserProfile.default_project;
         document.getElementById('global-project-select').value = activeGlobalProjectId;
@@ -245,6 +304,7 @@ async function sendSystemMessage(projectId, content) {
   await supabase.from('messages').insert([{
       project_id: projectId,
       user_id: currentUser.id,
+      org_id: currentUserProfile.org_id,
       content: content
   }]);
 }
@@ -253,21 +313,21 @@ async function fetchTasks() {
   const { data } = await supabase
     .from('tasks')
     .select('*, category:categories(name), project:projects(name), assignee:profiles!tasks_assigned_to_fkey(full_name), task_attachments(id, file_url)')
+    .eq('org_id', currentUserProfile.org_id);
   if (data) {
     allTasksData = data;
     renderTasks();
   }
 }
 
-// --- MODAL UTILS ---
+// --- DIALOG MODAL UTILS ---
 window.openModal = (id) => document.getElementById(id).classList.add('active');
 window.closeModal = (id) => {
   document.getElementById(id).classList.remove('active');
-  
   if(id === 'task-modal') {
     editingTaskId = null;
     pendingFiles = [];
-    renderPendingFiles(); // Clears UI
+    renderPendingFiles(); 
     document.getElementById('new-task-input').value = '';
     document.getElementById('form-title').textContent = 'Create New Task';
   } 
@@ -281,7 +341,7 @@ window.closeModal = (id) => {
     document.getElementById('match-msg').textContent = '';
     document.getElementById('settings-msg').textContent = '';
     document.getElementById('profile-msg').textContent = '';
-    newPw.dispatchEvent(new Event('input')); // Reset red crosses
+    newPw.dispatchEvent(new Event('input')); 
   }
 };
 
@@ -295,11 +355,11 @@ document.getElementById('open-task-modal-btn').addEventListener('click', () => {
 document.getElementById('open-proj-modal-btn').addEventListener('click', () => openModal('project-modal'));
 document.getElementById('open-cat-modal-btn').addEventListener('click', () => openModal('cat-modal'));
 
-// --- PROJECT & CATEGORY CRUD ---
+// --- WRITE PIPELINES (PROCESSED WITH VALIDATED ORG_ID) ---
 document.getElementById('add-proj-btn').addEventListener('click', async () => {
   const name = document.getElementById('new-proj-input').value.trim();
   if (name) {
-    await supabase.from('projects').insert([{ name }]);
+    await supabase.from('projects').insert([{ name, org_id: currentUserProfile.org_id }]);
     document.getElementById('new-proj-input').value = '';
     closeModal('project-modal');
   }
@@ -308,7 +368,7 @@ document.getElementById('add-proj-btn').addEventListener('click', async () => {
 document.getElementById('add-cat-btn').addEventListener('click', async () => {
   const name = document.getElementById('new-cat-input').value.trim();
   if (name) {
-    await supabase.from('categories').insert([{ name }]);
+    await supabase.from('categories').insert([{ name, org_id: currentUserProfile.org_id }]);
     document.getElementById('new-cat-input').value = '';
     fetchCategories();
   }
@@ -321,7 +381,7 @@ window.deleteCategory = async (id) => {
   }
 };
 
-// --- IMAGE UPLOAD LOGIC ---
+// --- MULTI-ATTACHMENT DRAG/DROP FILE ENGINE ---
 const dropZone = document.getElementById('image-upload-zone');
 const fileInput = document.getElementById('file-input');
 
@@ -334,9 +394,7 @@ if (dropZone && fileInput) {
     dropZone.classList.remove('dragover');
     handleFiles(e.dataTransfer.files);
   });
-
   fileInput.addEventListener('change', (e) => handleFiles(e.target.files));
-
   document.addEventListener('paste', (e) => {
     if(document.getElementById('task-modal').classList.contains('active')) {
       if(e.clipboardData && e.clipboardData.files.length > 0) {
@@ -355,22 +413,20 @@ function handleFiles(files) {
   });
 }
 
-// UPDATED: Render the images in the Add Task Modal with a Delete Button
 function renderPendingFiles() {
   const previewList = document.getElementById('image-preview-list');
   previewList.innerHTML = '';
-  
   pendingFiles.forEach((file, index) => {
     const wrapper = document.createElement('div');
     wrapper.style.position = 'relative';
     wrapper.style.display = 'inline-block';
-    
+         
     const img = document.createElement('img');
     img.src = URL.createObjectURL(file);
     img.style.height = '60px';
     img.style.borderRadius = '4px';
     img.style.border = '1px solid var(--border-color)';
-    
+         
     const delBtn = document.createElement('span');
     delBtn.innerHTML = '&times;';
     delBtn.style.position = 'absolute';
@@ -387,19 +443,18 @@ function renderPendingFiles() {
     delBtn.style.cursor = 'pointer';
     delBtn.style.fontSize = '12px';
     delBtn.style.fontWeight = 'bold';
-    
+         
     delBtn.onclick = () => {
       pendingFiles.splice(index, 1);
-      renderPendingFiles(); // Re-render without the deleted image
+      renderPendingFiles(); 
     };
-    
     wrapper.appendChild(img);
     wrapper.appendChild(delBtn);
     previewList.appendChild(wrapper);
   });
 }
 
-// --- TASK SAVE LOGIC ---
+// --- SECURED TASK WORKFLOW MANAGEMENT ---
 document.getElementById('add-task-btn').addEventListener('click', async () => {
   const title = document.getElementById('new-task-input').value.trim();
   const assigneeVal = document.getElementById('assignee-select').value;
@@ -414,6 +469,7 @@ document.getElementById('add-task-btn').addEventListener('click', async () => {
   const payload = {
     title,
     project_id: projectId,
+    org_id: currentUserProfile.org_id,
     category_id: document.getElementById('category-select').value || null,
     priority: document.getElementById('priority-select').value,
     is_group_task: assigneeVal === 'ALL',
@@ -439,10 +495,7 @@ document.getElementById('add-task-btn').addEventListener('click', async () => {
     for (const file of pendingFiles) {
       const fileExt = file.name.split('.').pop() || 'png'; 
       const fileName = `${targetTaskId}-${Date.now()}.${fileExt}`;
-      
-      const { data: uploadData } = await supabase.storage
-        .from('task-images')
-        .upload(fileName, file);
+      const { data: uploadData } = await supabase.storage.from('task-images').upload(fileName, file);
 
       if (uploadData) {
         const { data: publicUrlData } = supabase.storage.from('task-images').getPublicUrl(fileName);
@@ -477,10 +530,8 @@ window.deleteTask = async (id) => {
     if (isAnimating) return;
     isAnimating = true;
 
-    // Define the variables so the system message doesn't crash
     const task = allTasksData.find(t => t.id === id);
     const myName = currentUserProfile?.full_name || 'A teammate';
-
     const myEl = document.getElementById(`my-task-${id}`);
     const allEl = document.getElementById(`all-task-${id}`);
     const activeElements = [myEl, allEl].filter(el => el !== null);
@@ -495,7 +546,7 @@ window.deleteTask = async (id) => {
   }
 };
 
-// --- CHAT LOGIC ---
+// --- CONVERSATION PIPELINES ---
 document.getElementById('send-msg-btn').addEventListener('click', async () => {
     const content = document.getElementById('new-msg-input').value.trim();
     if (!content || activeGlobalProjectId === 'all') return;
@@ -503,15 +554,14 @@ document.getElementById('send-msg-btn').addEventListener('click', async () => {
     const { error } = await supabase.from('messages').insert([{
         project_id: activeGlobalProjectId,
         user_id: currentUser.id,
+        org_id: currentUserProfile.org_id,
         content: content
     }]);
     
     if (error) {
-        alert("Failed to send message. Make sure this user exists in the 'profiles' table! Error: " + error.message);
-        console.error("Chat Insert Error:", error);
+        alert("Failed to deliver update channel broadcast: " + error.message);
         return;
     }
-    
     document.getElementById('new-msg-input').value = '';
 });
 
@@ -534,6 +584,7 @@ async function fetchMessages() {
         .from('messages')
         .select('*, profile:profiles(full_name)')
         .eq('project_id', activeGlobalProjectId)
+        .eq('org_id', currentUserProfile.org_id)
         .order('created_at', { ascending: true });
     
     if (data) {
@@ -546,7 +597,7 @@ async function fetchMessages() {
                 <div style="display: flex; flex-direction: column; align-items: ${isMe ? 'flex-end' : 'flex-start'}; margin-bottom: 8px;">
                     <div style="display: flex; align-items: center;">
                         <span style="font-size: 10px; color: var(--text-muted); margin-bottom: 3px;">
-                            ${m.profile?.full_name || 'Unknown User'} • ${timeString}
+                            ${m.profile?.full_name || 'Unknown User'} &middot; ${timeString}
                         </span>
                         ${deleteBtn}
                     </div>
@@ -556,14 +607,13 @@ async function fetchMessages() {
                 </div>
             `;
         }).join('');
-
         const msgList = document.getElementById('message-list');
         msgList.innerHTML = msgHtml || '<p style="color: var(--text-muted); text-align: center;">No messages yet. Start the conversation!</p>';
         msgList.scrollTop = msgList.scrollHeight; 
     }
 }
 
-// --- GLOBAL FILTERS & SEARCH ---
+// --- VISUAL FILTERS, VIEWPORT SCAN & LIST SORTING ---
 document.getElementById('global-project-select').addEventListener('change', (e) => {
   activeGlobalProjectId = e.target.value;
   renderTasks(); 
@@ -576,7 +626,6 @@ document.querySelectorAll('input[id^="search-"]').forEach(searchBox => {
   searchBox.addEventListener('keydown', (e) => { if (e.key === 'Escape') { searchBox.value = ''; renderTasks(); }});
 });
 
-// UPDATED: Visibility Toggle logic pointing to the new checkbox switch
 const visibilityToggle = document.getElementById('visibility-toggle');
 if (visibilityToggle) {
   visibilityToggle.addEventListener('change', (e) => {
@@ -585,7 +634,6 @@ if (visibilityToggle) {
       visibilityToggle.checked = !visibilityToggle.checked; 
       return; 
     }
-    
     const label = document.getElementById('visibility-label');
     const isChecked = visibilityToggle.checked;
     
@@ -614,7 +662,6 @@ if (visibilityToggle) {
   });
 }
 
-// --- RENDER LOGIC ---
 function renderTasks() {
   if (isAnimating) return;
   const searchMy = document.getElementById('search-my').value.toLowerCase();
@@ -631,9 +678,10 @@ function renderTasks() {
 
   document.getElementById('my-task-list').innerHTML = buildHTML(myTasks, 'my');
   document.getElementById('all-task-list').innerHTML = buildHTML(allTasks, 'all');
-    document.querySelectorAll('.unseen-task').forEach(el => {
+  
+  document.querySelectorAll('.unseen-task').forEach(el => {
     viewportObserver.observe(el);
-    });
+  });
   newlyAddedTaskId = null;
   triggerSlideInAllCompleted = false;
 }
@@ -660,7 +708,6 @@ function processList(tasks, search, priorityFilter, sortMode, userFilter) {
   return [...incomplete, ...completed];
 }
 
-// UPDATED: BuildHTML logic with action buttons moved to the right and styled as toggles
 function buildHTML(tasks, prefix) {
   if (tasks.length === 0) return '<p style="color:var(--text-muted)">No tasks found.</p>';
 
@@ -671,7 +718,6 @@ function buildHTML(tasks, prefix) {
     if (isCompleted && triggerSlideInAllCompleted) animClass = 'anim-slide-in';
 
     const assigneeName = t.is_group_task ? '<span style="color:var(--primary-color)">Group Task</span>' : (t.assignee?.full_name || 'Unassigned');
-    
     const imageHtml = t.task_attachments && t.task_attachments.length > 0 
         ? `<div style="display:flex; gap:8px; margin-top: 10px; overflow-x: auto; max-width: 150px;">` + 
           t.task_attachments.map((att, index) => 
@@ -682,17 +728,15 @@ function buildHTML(tasks, prefix) {
     return `
       <div class="task-item ${isCompleted ? 'completed' : ''} ${animClass} ${unseenTaskIds.has(t.id) ? 'unseen-task' : ''}" id="${prefix}-task-${t.id}">
         <div class="task-header" style="display: flex; justify-content: space-between; align-items: flex-start; width: 100%;">
-          
           <div style="display:flex; flex-direction:column; flex:1;">
             <div>
               <div class="task-title" style="font-weight:bold; font-size:16px;">${t.title}</div>
               <div style="font-size:12px; color:var(--text-muted); margin-top:4px;">
-                [${t.category?.name || 'No Cat'}] • <span class="priority-${t.priority}">${t.priority}</span> • ${assigneeName}
+                [${t.category?.name || 'No Cat'}] &bull; <span class="priority-${t.priority}">${t.priority}</span> &bull; ${assigneeName}
               </div>
             </div>
             ${imageHtml}
           </div>
-
           <div style="display:flex; align-items:center; gap:15px; margin-left: 15px;">
             <label class="switch" title="${isCompleted ? 'Mark Incomplete' : 'Mark Complete'}">
               <input type="checkbox" ${isCompleted ? 'checked' : ''} onchange="toggleTaskStatus('${t.id}', '${t.status}', this)">
@@ -703,31 +747,27 @@ function buildHTML(tasks, prefix) {
               <button class="small-btn danger-btn" onclick="deleteTask('${t.id}')">X</button>
             </div>
           </div>
-          
         </div>
       </div>
     `;
   }).join('');
 }
 
-// --- ANIMATED STATUS UPDATE ---
+// --- TASK STATUS ENGINE ---
 window.toggleTaskStatus = async (id, currentStatus, checkboxEl) => {
   if (isAnimating) {
     if (checkboxEl) checkboxEl.checked = !checkboxEl.checked; 
     return;
   }
   
-  // Define the variables so the system message doesn't crash
   const task = allTasksData.find(t => t.id === id);
   const myName = currentUserProfile?.full_name || 'A teammate';
-  
   const myEl = document.getElementById(`my-task-${id}`);
   const allEl = document.getElementById(`all-task-${id}`);
   const activeElements = [myEl, allEl].filter(el => el !== null);
 
   if (currentStatus === 'pending') {
     isAnimating = true;
-
     sendSystemMessage(task.project_id, `Automated Update - Completed Task: ${myName} has just completed "${task.title}". Go team!`);
 
     if (hideCompleted) {
@@ -753,7 +793,7 @@ window.toggleTaskStatus = async (id, currentStatus, checkboxEl) => {
   }
 };
 
-
+// --- MEDIA PORTAL PREVIEW GALLERY ---
 window.openGallery = (taskId, startIndex) => {
   const task = allTasksData.find(t => t.id === taskId);
   if (task && task.task_attachments) {
@@ -807,12 +847,17 @@ window.deleteMessage = async (id) => {
   }
 };
 
-// --- SETTINGS & PROFILE UPDATE LOGIC ---
+// --- SETTINGS PREFERENCES LOGIC ---
 document.getElementById('open-settings-btn').addEventListener('click', () => {
   if (currentUserProfile) {
     document.getElementById('settings-name-input').value = currentUserProfile.full_name || '';
     document.getElementById('settings-default-project').value = currentUserProfile.default_project || 'all';
   }
+  document.getElementById('notif-new-task').checked = notifPrefs.newTask;
+  document.getElementById('notif-del-task').checked = notifPrefs.delTask;
+  document.getElementById('notif-status-task').checked = notifPrefs.statusTask;
+  document.getElementById('notif-msg').checked = notifPrefs.newMsg;
+  document.getElementById('notif-login').checked = notifPrefs.login;
   openModal('settings-modal');
 });
 
@@ -827,10 +872,8 @@ document.getElementById('update-profile-btn').addEventListener('click', async ()
   const profileUpdate = { full_name: newName };
   profileUpdate.default_project = newDefaultProject === 'all' ? null : newDefaultProject;
   
-  // 1. Update the public Profiles table (for the app UI)
   const { error: profileError } = await supabase.from('profiles').update(profileUpdate).eq('id', currentUser.id);
   
-  // 2. Update the core Supabase Auth metadata (for the dashboard "Display Name")
   if (newName) {
     await supabase.auth.updateUser({
       data: { full_name: newName }
@@ -851,29 +894,8 @@ document.getElementById('update-profile-btn').addEventListener('click', async ()
   }
 });
 
-
-// --- NOTIFICATION SETTINGS LOGIC ---
-document.getElementById('open-settings-btn').addEventListener('click', () => {
-  // Existing Profile data loading...
-  if (currentUserProfile) {
-    document.getElementById('settings-name-input').value = currentUserProfile.full_name || '';
-    document.getElementById('settings-default-project').value = currentUserProfile.default_project || 'all';
-  }
-  
-  // Load Notification Checkboxes
-  document.getElementById('notif-new-task').checked = notifPrefs.newTask;
-  document.getElementById('notif-del-task').checked = notifPrefs.delTask;
-  document.getElementById('notif-status-task').checked = notifPrefs.statusTask;
-  document.getElementById('notif-msg').checked = notifPrefs.newMsg;
-  document.getElementById('notif-login').checked = notifPrefs.login;
-  
-  openModal('settings-modal');
-});
-
 document.getElementById('save-notifs-btn').addEventListener('click', () => {
-  // Request permission if they are turning things on for the first time
   if (Notification.permission === 'default') Notification.requestPermission();
-
   notifPrefs = {
     newTask: document.getElementById('notif-new-task').checked,
     delTask: document.getElementById('notif-del-task').checked,
@@ -881,14 +903,13 @@ document.getElementById('save-notifs-btn').addEventListener('click', () => {
     newMsg: document.getElementById('notif-msg').checked,
     login: document.getElementById('notif-login').checked
   };
-
   localStorage.setItem('fieldhub_notifs', JSON.stringify(notifPrefs));
-  
   const msgEl = document.getElementById('notif-msg-text');
   msgEl.textContent = "Preferences saved for this device.";
   setTimeout(() => msgEl.textContent = '', 2000);
 });
 
+// --- CORE PASSWORD COMPLIANCE REGEX ENGINE ---
 const newPwInput = document.getElementById('new-password');
 const confirmPwInput = document.getElementById('confirm-password');
 const updatePwBtn = document.getElementById('update-password-btn');
@@ -945,7 +966,6 @@ confirmPwInput.addEventListener('input', checkMatch);
 updatePwBtn.addEventListener('click', async () => {
   const oldPassword = document.getElementById('old-password').value;
   const newPassword = newPwInput.value;
-  
   if (!oldPassword) return settingsMsg.textContent = 'Please enter your current password.';
   
   settingsMsg.style.color = 'var(--text-main)';
@@ -984,5 +1004,109 @@ updatePwBtn.addEventListener('click', async () => {
     }, 2000);
   }
 });
+
+// ==========================================
+// --- ROLE-BASED ADMIN PANEL LOGIC ---
+// ==========================================
+
+document.getElementById('open-admin-btn').addEventListener('click', () => {
+  openModal('admin-modal');
+  loadAdminDashboard();
+});
+
+async function loadAdminDashboard() {
+  const isSuper = currentUserProfile.role === 'super_admin';
+  const orgSection = document.getElementById('admin-orgs-section');
+  const orgFilter = document.getElementById('admin-user-org-filter');
+
+  // Super Admins get to see and manage Orgs
+  if (isSuper) {
+    orgSection.classList.remove('hidden');
+    orgFilter.classList.remove('hidden');
+    
+    // Fetch all Orgs
+    const { data: orgs } = await supabase.from('organizations').select('*').order('name');
+    
+    // Populate Org List
+    document.getElementById('admin-org-list').innerHTML = orgs.map(o => `
+      <div style="display:flex; justify-content:space-between; background:var(--bg-color); padding:10px; border-radius:6px;">
+        <span><strong>${o.name}</strong> (Code: ${o.join_code})</span>
+        <button class="small-btn danger-btn" onclick="deleteOrg('${o.id}')">Delete</button>
+      </div>
+    `).join('');
+
+    // Populate the Filter Dropdown
+    orgFilter.innerHTML = '<option value="all">View All Organizations</option>' + 
+                          orgs.map(o => `<option value="${o.id}">${o.name}</option>`).join('');
+  }
+
+  fetchAdminUsers(isSuper ? 'all' : currentUserProfile.org_id);
+}
+
+// Fetch users based on admin limits
+async function fetchAdminUsers(targetOrgId) {
+  let query = supabase.from('profiles').select('*, organizations(name)').order('full_name');
+  
+  // If not filtering for 'all' (or if they are just a general admin), lock the query to a specific org
+  if (targetOrgId !== 'all') {
+    query = query.eq('org_id', targetOrgId);
+  }
+
+  const { data: users } = await query;
+
+  document.getElementById('admin-user-list').innerHTML = users.map(u => `
+    <div style="display:flex; justify-content:space-between; align-items:center; background:var(--bg-color); padding:10px; border-radius:6px; opacity: ${u.is_banned ? '0.5' : '1'}">
+      <div style="display:flex; flex-direction:column; gap:4px;">
+        <strong>${u.full_name || 'Unnamed'}</strong>
+        <span style="font-size:12px; color:var(--text-muted);">
+          Org: ${u.organizations?.name || 'None'} | Role: <span style="color:var(--primary-color)">${u.role}</span>
+        </span>
+      </div>
+      
+      <div style="display:flex; gap:5px; align-items: center;">
+        <select onchange="updateUserRole('${u.id}', this.value)" style="padding:4px; margin:0;" ${u.id === currentUser.id ? 'disabled' : ''}>
+          <option value="general_user" ${u.role === 'general_user' ? 'selected' : ''}>General User</option>
+          <option value="general_admin" ${u.role === 'general_admin' ? 'selected' : ''}>Admin</option>
+          ${currentUserProfile.role === 'super_admin' ? `<option value="super_admin" ${u.role === 'super_admin' ? 'selected' : ''}>Super Admin</option>` : ''}
+        </select>
+        
+        <button class="small-btn ${u.is_banned ? 'success-btn' : 'danger-btn'}" onclick="toggleBan('${u.id}', ${u.is_banned})" ${u.id === currentUser.id ? 'disabled' : ''}>
+          ${u.is_banned ? 'Unban' : 'Ban'}
+        </button>
+      </div>
+    </div>
+  `).join('');
+}
+
+// Re-filter users when super_admin changes the dropdown
+document.getElementById('admin-user-org-filter').addEventListener('change', (e) => {
+  fetchAdminUsers(e.target.value);
+});
+
+// Admin Actions
+window.updateUserRole = async (userId, newRole) => {
+  await supabase.from('profiles').update({ role: newRole }).eq('id', userId);
+  loadAdminDashboard(); // Refresh
+};
+
+window.toggleBan = async (userId, currentStatus) => {
+  await supabase.from('profiles').update({ is_banned: !currentStatus }).eq('id', userId);
+  loadAdminDashboard(); // Refresh
+};
+
+document.getElementById('create-org-btn').addEventListener('click', async () => {
+  const name = document.getElementById('new-org-name').value.trim();
+  const code = document.getElementById('new-org-code').value.trim();
+  if (name && code) {
+    const { error } = await supabase.from('organizations').insert([{ name, join_code: code }]);
+    if (error) alert(error.message);
+    else {
+      document.getElementById('new-org-name').value = '';
+      document.getElementById('new-org-code').value = '';
+      loadAdminDashboard();
+    }
+  }
+});
+
 
 checkSession();
