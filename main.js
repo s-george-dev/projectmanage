@@ -12,6 +12,11 @@ let pendingFiles = [];
 let editingTaskId = null;
 let activeGlobalProjectId = 'all'; 
 
+// NEW: Multi-Tenant State
+let activeOrgId = null;
+let activeRole = 'general_user';
+let myOrgs = [];
+
 // Animation & UI States
 let hideCompleted = false;
 let isAnimating = false;
@@ -46,8 +51,7 @@ const viewportObserver = new IntersectionObserver((entries) => {
   });
 }, { threshold: 0.5 }); 
 
-// --- INIT & MULTI-TENANCY VERIFICATION ---
-// --- INIT, AUTH & MULTI-TENANCY VERIFICATION ---
+// --- INIT, AUTH & WORKSPACE INITIALIZATION ---
 async function checkSession() {
   const { data: { session } } = await supabase.auth.getSession();
   
@@ -55,46 +59,60 @@ async function checkSession() {
     currentUser = session.user;
     
     try {
-      // Fetch the profile exactly ONE time
       const { data: profile, error } = await supabase.from('profiles').select('*').eq('id', currentUser.id).maybeSingle();
-
       if (error) console.error("Profile Fetch Error:", error.message);
 
-      const authSect = document.getElementById('auth-section');
-      const appSect = document.getElementById('app-section');
-      const orgModal = document.getElementById('org-modal');
-
-      // 1. Check for Bans first
+      // Check for Bans
       if (profile?.is_banned) {
         alert("Your account has been suspended. Please contact your administrator.");
         await supabase.auth.signOut();
         return location.reload();
       }
 
-      // 2. Check for missing Organization (The Lock Screen)
-      if (!profile || !profile.org_id) {
+      if (profile && !profile.email && currentUser.email) {
+        await supabase.from('profiles').update({ email: currentUser.email }).eq('id', currentUser.id);
+        profile.email = currentUser.email;
+      }
+
+      // Fetch user's workspaces from the junction table
+      const { data: memberships } = await supabase
+        .from('organization_members')
+        .select('role, org_id, organizations(id, name, join_code)')
+        .eq('user_id', currentUser.id);
+
+      myOrgs = memberships || [];
+
+      const authSect = document.getElementById('auth-section');
+      const appSect = document.getElementById('app-section');
+      const orgModal = document.getElementById('org-modal');
+
+      // Lock Screen if they belong to zero workspaces
+      if (myOrgs.length === 0) {
         if (authSect) authSect.classList.add('hidden');
         if (appSect) appSect.classList.add('hidden');
-        
-        if (orgModal) {
-          orgModal.classList.add('active');
-        } else {
-          console.error("CRITICAL: You are missing the <div id='org-modal'> in your index.html!");
-          alert("Error: Missing Organization Modal HTML. Check console F12.");
-        }
+        if (orgModal) orgModal.classList.add('active');
       } 
-      // 3. Let them into the app!
       else {
         currentUserProfile = profile;
         
-        // REVEAL ADMIN BUTTON IF AUTHORIZED
-        if (currentUserProfile.role === 'super_admin' || currentUserProfile.role === 'general_admin') {
+        // Determine the Active Workspace
+        activeOrgId = profile.last_active_org_id;
+        let currentMembership = myOrgs.find(m => m.org_id === activeOrgId);
+        
+        if (!currentMembership) {
+            activeOrgId = profile.default_org_id || myOrgs[0].org_id;
+            currentMembership = myOrgs.find(m => m.org_id === activeOrgId);
+        }
+        activeRole = currentMembership.role;
+
+        // Populate the Header Workspace Switcher
+        const wsSelect = document.getElementById('workspace-select');
+        wsSelect.innerHTML = myOrgs.map(m => `<option value="${m.org_id}" ${m.org_id === activeOrgId ? 'selected' : ''}>🏢 ${m.organizations.name}</option>`).join('');
+        
+        // Reveal Admin Panel Button if they have authority in THIS workspace
+        if (activeRole === 'super_admin' || activeRole === 'general_admin') {
           const adminBtn = document.getElementById('open-admin-btn');
-          if (adminBtn) {
-            adminBtn.classList.remove('hidden');
-          } else {
-            console.warn("Notice: You are an Admin, but the 'open-admin-btn' is missing from index.html.");
-          }
+          if (adminBtn) adminBtn.classList.remove('hidden');
         }
 
         if (authSect) authSect.classList.add('hidden');
@@ -104,9 +122,7 @@ async function checkSession() {
         loadAppData();
         setupRealtime(); 
         
-        if (Notification.permission === 'default') {
-          Notification.requestPermission();
-        }
+        if (Notification.permission === 'default') Notification.requestPermission();
       }
     } catch (err) {
       console.error("Crash during login sequence:", err);
@@ -114,7 +130,16 @@ async function checkSession() {
   }
 }
 
-// Verification Gatehouse Handler
+// Header Workspace Switcher Logic
+document.getElementById('workspace-select').addEventListener('change', async (e) => {
+    activeOrgId = e.target.value;
+    // Save to profile so it remembers where they left off
+    await supabase.from('profiles').update({ last_active_org_id: activeOrgId }).eq('id', currentUser.id);
+    // Securely reload the app to purge old data and re-initialize the real-time sockets
+    location.reload(); 
+});
+
+// Lock Screen Verification Logic (First time join)
 document.getElementById('verify-org-btn').addEventListener('click', async () => {
   const code = document.getElementById('org-code-input').value.trim();
   const msg = document.getElementById('org-msg');
@@ -130,17 +155,23 @@ document.getElementById('verify-org-btn').addEventListener('click', async () => 
     return msg.textContent = "Invalid Organisation ID. Access Denied.";
   }
 
-  const { error } = await supabase.from('profiles').upsert({
+  await supabase.from('profiles').upsert({
     id: currentUser.id,
+    email: currentUser.email, // NEW: Saves the email directly
     full_name: currentUser.user_metadata?.full_name || currentUser.email.split('@')[0],
-    org_id: org.id
+    last_active_org_id: org.id
+  });
+  // Then add them to the junction table
+  const { error } = await supabase.from('organization_members').insert({
+    user_id: currentUser.id,
+    org_id: org.id,
+    role: 'general_user'
   });
 
   if(error) {
     msg.style.color = "var(--danger)";
     return msg.textContent = error.message;
   }
-
   location.reload();
 });
 
@@ -160,9 +191,7 @@ document.getElementById('login-btn').addEventListener('click', async () => {
 document.getElementById('google-login-btn').addEventListener('click', async () => {
   const { error } = await supabase.auth.signInWithOAuth({
     provider: 'google',
-    options: {
-      redirectTo: window.location.origin + window.location.pathname
-    }
+    options: { redirectTo: window.location.origin + window.location.pathname }
   });
   if (error) alert("Google Connection Interrupted: " + error.message);
 });
@@ -172,17 +201,17 @@ document.getElementById('logout-btn').addEventListener('click', async () => {
   location.reload();
 });
 
-// --- REALTIME ENGINE ---
+// --- REALTIME ENGINE (ISOLATED TO ACTIVE WORKSPACE) ---
 function setupRealtime() {
-  const channel = supabase.channel('fieldhub-sync');
+  const channel = supabase.channel(`fieldhub-sync-${activeOrgId}`);
   let presenceInitialized = false; 
 
   channel
-    .on('postgres_changes', { event: '*', schema: 'public', table: 'projects' }, fetchProjects)
+    .on('postgres_changes', { event: '*', schema: 'public', table: 'projects', filter: `org_id=eq.${activeOrgId}` }, fetchProjects)
     
-    .on('postgres_changes', { event: 'INSERT', schema: 'public', table: 'messages' }, (payload) => {
+    .on('postgres_changes', { event: 'INSERT', schema: 'public', table: 'messages', filter: `org_id=eq.${activeOrgId}` }, (payload) => {
       fetchMessages();
-      if (payload.new.user_id !== currentUser.id && payload.new.org_id === currentUserProfile.org_id && notifPrefs.newMsg && Notification.permission === 'granted') {
+      if (payload.new.user_id !== currentUser.id && notifPrefs.newMsg && Notification.permission === 'granted') {
         new Notification("New Message", { 
           body: payload.new.content, 
           icon: "https://fieldhub.uk/assets/images/favicon-transparent.png",
@@ -191,13 +220,11 @@ function setupRealtime() {
       }
     })
 
-    .on('postgres_changes', { event: '*', schema: 'public', table: 'tasks' }, async (payload) => {
+    .on('postgres_changes', { event: '*', schema: 'public', table: 'tasks', filter: `org_id=eq.${activeOrgId}` }, async (payload) => {
       await fetchTasks();
       if (Notification.permission !== 'granted') return;
 
       const isMine = payload.new?.user_id === currentUser.id || payload.old?.user_id === currentUser.id;
-      const targetOrg = payload.new?.org_id || payload.old?.org_id;
-      if (targetOrg !== currentUserProfile.org_id) return;
 
       if (payload.eventType === 'INSERT') {
         if (isMine) return; 
@@ -251,7 +278,7 @@ function setupRealtime() {
     });
 }
 
-// --- SECURED FETCH PIPELINES ---
+// --- SECURED FETCH PIPELINES (NOW FILTERED BY ACTIVE ORG ID) ---
 async function loadAppData() {
   await fetchProjects();
   await fetchCategories();
@@ -261,7 +288,7 @@ async function loadAppData() {
 }
 
 async function fetchProjects() {
-  const { data } = await supabase.from('projects').select('*').eq('org_id', currentUserProfile.org_id).order('name');
+  const { data } = await supabase.from('projects').select('*').eq('org_id', activeOrgId).order('name');
   if (data) {
     allProjectsData = data;
     const options = data.map(p => `<option value="${p.id}">${p.name}</option>`).join('');
@@ -273,7 +300,7 @@ async function fetchProjects() {
 }
 
 async function fetchCategories() {
-  const { data } = await supabase.from('categories').select('*').eq('org_id', currentUserProfile.org_id).order('name');
+  const { data } = await supabase.from('categories').select('*').eq('org_id', activeOrgId).order('name');
   if (data) {
     document.getElementById('category-select').innerHTML = '<option value="">Category...</option>' + data.map(c => `<option value="${c.id}">${c.name}</option>`).join('');
     document.getElementById('category-list').innerHTML = data.map(c => `
@@ -285,10 +312,11 @@ async function fetchCategories() {
 }
 
 async function fetchProfiles() {
-  const { data } = await supabase.from('profiles').select('*').eq('org_id', currentUserProfile.org_id);
+  // We join through organization_members to get the correct users for THIS workspace
+  const { data } = await supabase.from('organization_members').select('profiles(*)').eq('org_id', activeOrgId);
   if (data) {
-    allProfiles = data; 
-    const options = data.map(p => `<option value="${p.id}">${p.full_name}</option>`).join('');
+    allProfiles = data.map(m => m.profiles).filter(Boolean); 
+    const options = allProfiles.map(p => `<option value="${p.id}">${p.full_name}</option>`).join('');
     document.getElementById('assignee-select').innerHTML = '<option value="">Unassigned</option><option value="ALL">Group Task (All)</option>' + options;
     document.getElementById('filter-user-all').innerHTML = '<option value="All">All Users</option>' + options;
     
@@ -304,7 +332,7 @@ async function sendSystemMessage(projectId, content) {
   await supabase.from('messages').insert([{
       project_id: projectId,
       user_id: currentUser.id,
-      org_id: currentUserProfile.org_id,
+      org_id: activeOrgId,
       content: content
   }]);
 }
@@ -313,7 +341,7 @@ async function fetchTasks() {
   const { data } = await supabase
     .from('tasks')
     .select('*, category:categories(name), project:projects(name), assignee:profiles!tasks_assigned_to_fkey(full_name), task_attachments(id, file_url)')
-    .eq('org_id', currentUserProfile.org_id);
+    .eq('org_id', activeOrgId);
   if (data) {
     allTasksData = data;
     renderTasks();
@@ -341,6 +369,8 @@ window.closeModal = (id) => {
     document.getElementById('match-msg').textContent = '';
     document.getElementById('settings-msg').textContent = '';
     document.getElementById('profile-msg').textContent = '';
+    document.getElementById('join-msg').textContent = '';
+    document.getElementById('workspace-pref-msg').textContent = '';
     newPw.dispatchEvent(new Event('input')); 
   }
 };
@@ -355,11 +385,11 @@ document.getElementById('open-task-modal-btn').addEventListener('click', () => {
 document.getElementById('open-proj-modal-btn').addEventListener('click', () => openModal('project-modal'));
 document.getElementById('open-cat-modal-btn').addEventListener('click', () => openModal('cat-modal'));
 
-// --- WRITE PIPELINES (PROCESSED WITH VALIDATED ORG_ID) ---
+// --- WRITE PIPELINES ---
 document.getElementById('add-proj-btn').addEventListener('click', async () => {
   const name = document.getElementById('new-proj-input').value.trim();
   if (name) {
-    await supabase.from('projects').insert([{ name, org_id: currentUserProfile.org_id }]);
+    await supabase.from('projects').insert([{ name, org_id: activeOrgId }]);
     document.getElementById('new-proj-input').value = '';
     closeModal('project-modal');
   }
@@ -368,7 +398,7 @@ document.getElementById('add-proj-btn').addEventListener('click', async () => {
 document.getElementById('add-cat-btn').addEventListener('click', async () => {
   const name = document.getElementById('new-cat-input').value.trim();
   if (name) {
-    await supabase.from('categories').insert([{ name, org_id: currentUserProfile.org_id }]);
+    await supabase.from('categories').insert([{ name, org_id: activeOrgId }]);
     document.getElementById('new-cat-input').value = '';
     fetchCategories();
   }
@@ -469,7 +499,7 @@ document.getElementById('add-task-btn').addEventListener('click', async () => {
   const payload = {
     title,
     project_id: projectId,
-    org_id: currentUserProfile.org_id,
+    org_id: activeOrgId,
     category_id: document.getElementById('category-select').value || null,
     priority: document.getElementById('priority-select').value,
     is_group_task: assigneeVal === 'ALL',
@@ -554,7 +584,7 @@ document.getElementById('send-msg-btn').addEventListener('click', async () => {
     const { error } = await supabase.from('messages').insert([{
         project_id: activeGlobalProjectId,
         user_id: currentUser.id,
-        org_id: currentUserProfile.org_id,
+        org_id: activeOrgId,
         content: content
     }]);
     
@@ -584,7 +614,7 @@ async function fetchMessages() {
         .from('messages')
         .select('*, profile:profiles(full_name)')
         .eq('project_id', activeGlobalProjectId)
-        .eq('org_id', currentUserProfile.org_id)
+        .eq('org_id', activeOrgId)
         .order('created_at', { ascending: true });
     
     if (data) {
@@ -852,6 +882,10 @@ document.getElementById('open-settings-btn').addEventListener('click', () => {
   if (currentUserProfile) {
     document.getElementById('settings-name-input').value = currentUserProfile.full_name || '';
     document.getElementById('settings-default-project').value = currentUserProfile.default_project || 'all';
+    
+    // Load Workspace Settings
+    document.getElementById('settings-default-workspace').innerHTML = myOrgs.map(m => `<option value="${m.org_id}">${m.organizations.name}</option>`).join('');
+    document.getElementById('settings-default-workspace').value = currentUserProfile.default_org_id || activeOrgId;
   }
   document.getElementById('notif-new-task').checked = notifPrefs.newTask;
   document.getElementById('notif-del-task').checked = notifPrefs.delTask;
@@ -891,6 +925,55 @@ document.getElementById('update-profile-btn').addEventListener('click', async ()
       fetchProfiles(); 
       fetchTasks();
     }, 2000);
+  }
+});
+
+// NEW: Settings "Join Another Workspace" Flow
+document.getElementById('settings-join-btn').addEventListener('click', async () => {
+  const code = document.getElementById('settings-join-code').value.trim();
+  const msg = document.getElementById('join-msg');
+  if(!code) return msg.textContent = "Please enter a Join Code.";
+
+  msg.style.color = "var(--text-main)";
+  msg.textContent = "Verifying...";
+
+  const { data: org } = await supabase.from('organizations').select('id, name').eq('join_code', code).maybeSingle();
+
+  if(!org) {
+    msg.style.color = "var(--danger)";
+    return msg.textContent = "Invalid Join Code.";
+  }
+
+  const { error } = await supabase.from('organization_members').insert({
+    user_id: currentUser.id,
+    org_id: org.id,
+    role: 'general_user'
+  });
+
+  if(error) {
+    msg.style.color = "var(--danger)";
+    return msg.textContent = "You are already a member of this workspace.";
+  }
+  
+  msg.style.color = "var(--success)";
+  msg.textContent = `Successfully joined ${org.name}! Reloading...`;
+  setTimeout(() => location.reload(), 1500);
+});
+
+// NEW: Settings "Save Default Workspace" Flow
+document.getElementById('save-workspace-prefs-btn').addEventListener('click', async () => {
+  const newDefaultOrgId = document.getElementById('settings-default-workspace').value;
+  const msg = document.getElementById('workspace-pref-msg');
+  
+  const { error } = await supabase.from('profiles').update({ default_org_id: newDefaultOrgId }).eq('id', currentUser.id);
+  
+  if (error) {
+      msg.style.color = "var(--danger)";
+      msg.textContent = error.message;
+  } else {
+      msg.style.color = "var(--success)";
+      msg.textContent = "Default workspace saved!";
+      setTimeout(() => msg.textContent = '', 2000);
   }
 });
 
@@ -1015,19 +1098,16 @@ document.getElementById('open-admin-btn').addEventListener('click', () => {
 });
 
 async function loadAdminDashboard() {
-  const isSuper = currentUserProfile.role === 'super_admin';
+  const isSuper = activeRole === 'super_admin';
   const orgSection = document.getElementById('admin-orgs-section');
   const orgFilter = document.getElementById('admin-user-org-filter');
 
-  // Super Admins get to see and manage Orgs
   if (isSuper) {
     orgSection.classList.remove('hidden');
     orgFilter.classList.remove('hidden');
     
-    // Fetch all Orgs
     const { data: orgs } = await supabase.from('organizations').select('*').order('name');
     
-    // Populate Org List
     document.getElementById('admin-org-list').innerHTML = orgs.map(o => `
       <div style="display:flex; justify-content:space-between; background:var(--bg-color); padding:10px; border-radius:6px;">
         <span><strong>${o.name}</strong> (Code: ${o.join_code})</span>
@@ -1035,63 +1115,77 @@ async function loadAdminDashboard() {
       </div>
     `).join('');
 
-    // Populate the Filter Dropdown
-    orgFilter.innerHTML = '<option value="all">View All Organizations</option>' + 
-                          orgs.map(o => `<option value="${o.id}">${o.name}</option>`).join('');
+    orgFilter.innerHTML = '<option value="all">View All Organizations</option>' + orgs.map(o => `<option value="${o.id}">${o.name}</option>`).join('');
   }
 
-  fetchAdminUsers(isSuper ? 'all' : currentUserProfile.org_id);
+  fetchAdminUsers(isSuper ? 'all' : activeOrgId);
 }
 
-// Fetch users based on admin limits
 async function fetchAdminUsers(targetOrgId) {
-  let query = supabase.from('profiles').select('*, organizations(name)').order('full_name');
+  // Query now explicitly requests the new email column
+  let query = supabase.from('organization_members').select('role, org_id, profiles(id, full_name, is_banned, email), organizations(name)');
   
-  // If not filtering for 'all' (or if they are just a general admin), lock the query to a specific org
-  if (targetOrgId !== 'all') {
-    query = query.eq('org_id', targetOrgId);
-  }
+  if (targetOrgId !== 'all') query = query.eq('org_id', targetOrgId);
 
-  const { data: users } = await query;
+  const { data: members } = await query;
 
-  document.getElementById('admin-user-list').innerHTML = users.map(u => `
+  document.getElementById('admin-user-list').innerHTML = members.map(m => {
+    const u = m.profiles;
+    if(!u) return '';
+
+    const isMe = u.id === currentUser.id;
+    const isTargetSuper = m.role === 'super_admin';
+    const iAmGeneralAdmin = activeRole === 'general_admin';
+    
+    // Determine if controls should be stripped for this specific row
+    let controlsHtml = '';
+    
+    if (iAmGeneralAdmin && isTargetSuper) {
+        // Strip controls, display static protective badge
+        controlsHtml = `<span style="font-size:12px; color:var(--text-muted); font-weight:bold; padding-right:10px;">Protected Account</span>`;
+    } else {
+        // Render normal controls
+        controlsHtml = `
+        <select onchange="updateUserRole('${u.id}', '${m.org_id}', this.value)" style="padding:4px; margin:0;" ${isMe ? 'disabled' : ''}>
+          <option value="general_user" ${m.role === 'general_user' ? 'selected' : ''}>General User</option>
+          <option value="general_admin" ${m.role === 'general_admin' ? 'selected' : ''}>Admin</option>
+          ${activeRole === 'super_admin' ? `<option value="super_admin" ${m.role === 'super_admin' ? 'selected' : ''}>Super Admin</option>` : ''}
+        </select>
+        
+        <button class="small-btn ${u.is_banned ? 'success-btn' : 'danger-btn'}" onclick="toggleBan('${u.id}', ${u.is_banned})" ${isMe ? 'disabled' : ''}>
+          ${u.is_banned ? 'Unban' : 'Ban'}
+        </button>`;
+    }
+
+    return `
     <div style="display:flex; justify-content:space-between; align-items:center; background:var(--bg-color); padding:10px; border-radius:6px; opacity: ${u.is_banned ? '0.5' : '1'}">
       <div style="display:flex; flex-direction:column; gap:4px;">
         <strong>${u.full_name || 'Unnamed'}</strong>
+        <span style="font-size:11px; color:var(--text-muted); font-family: monospace;">
+          ${u.email || 'No email saved'} | ID: ${u.id}
+        </span>
         <span style="font-size:12px; color:var(--text-muted);">
-          Org: ${u.organizations?.name || 'None'} | Role: <span style="color:var(--primary-color)">${u.role}</span>
+          Org: ${m.organizations?.name || 'None'} | Role: <span style="color:var(--primary-color)">${m.role}</span>
         </span>
       </div>
       
       <div style="display:flex; gap:5px; align-items: center;">
-        <select onchange="updateUserRole('${u.id}', this.value)" style="padding:4px; margin:0;" ${u.id === currentUser.id ? 'disabled' : ''}>
-          <option value="general_user" ${u.role === 'general_user' ? 'selected' : ''}>General User</option>
-          <option value="general_admin" ${u.role === 'general_admin' ? 'selected' : ''}>Admin</option>
-          ${currentUserProfile.role === 'super_admin' ? `<option value="super_admin" ${u.role === 'super_admin' ? 'selected' : ''}>Super Admin</option>` : ''}
-        </select>
-        
-        <button class="small-btn ${u.is_banned ? 'success-btn' : 'danger-btn'}" onclick="toggleBan('${u.id}', ${u.is_banned})" ${u.id === currentUser.id ? 'disabled' : ''}>
-          ${u.is_banned ? 'Unban' : 'Ban'}
-        </button>
+        ${controlsHtml}
       </div>
     </div>
-  `).join('');
+  `}).join('');
 }
 
-// Re-filter users when super_admin changes the dropdown
-document.getElementById('admin-user-org-filter').addEventListener('change', (e) => {
-  fetchAdminUsers(e.target.value);
-});
+document.getElementById('admin-user-org-filter').addEventListener('change', (e) => fetchAdminUsers(e.target.value));
 
-// Admin Actions
-window.updateUserRole = async (userId, newRole) => {
-  await supabase.from('profiles').update({ role: newRole }).eq('id', userId);
-  loadAdminDashboard(); // Refresh
+window.updateUserRole = async (userId, targetOrgId, newRole) => {
+  await supabase.from('organization_members').update({ role: newRole }).match({ user_id: userId, org_id: targetOrgId });
+  loadAdminDashboard(); 
 };
 
 window.toggleBan = async (userId, currentStatus) => {
   await supabase.from('profiles').update({ is_banned: !currentStatus }).eq('id', userId);
-  loadAdminDashboard(); // Refresh
+  loadAdminDashboard(); 
 };
 
 document.getElementById('create-org-btn').addEventListener('click', async () => {
@@ -1107,6 +1201,5 @@ document.getElementById('create-org-btn').addEventListener('click', async () => 
     }
   }
 });
-
 
 checkSession();
