@@ -24,6 +24,33 @@ let currentGalleryIndex = 0;
 
 const priorityScore = { 'High': 3, 'Medium': 2, 'Low': 1 };
 
+// --- NOTIFICATIONS & UNSEEN STATE ---
+let unseenTaskIds = new Set();
+let notifPrefs = JSON.parse(localStorage.getItem('fieldhub_notifs')) || {
+  newTask: true, delTask: true, statusTask: true, newMsg: true, login: true
+};
+
+let allProfiles = [];
+
+// This tool watches the screen and removes the green pulse when a task scrolls into view
+const viewportObserver = new IntersectionObserver((entries) => {
+  entries.forEach(entry => {
+    if (entry.isIntersecting) {
+      const el = entry.target;
+      // The ID looks like "my-task-UUID". We split it to get the raw UUID.
+      const rawId = el.id.replace('my-task-', '').replace('all-task-', '');
+      
+      // If it's been seen, remove from memory, stop pulsing, and stop watching it
+      if (unseenTaskIds.has(rawId)) {
+        unseenTaskIds.delete(rawId);
+        el.classList.remove('unseen-task');
+        viewportObserver.unobserve(el);
+      }
+    }
+  });
+}, { threshold: 0.5 }); // Triggers when 50% of the task is visible
+
+
 // --- INIT & AUTH ---
 async function checkSession() {
   const { data: { session } } = await supabase.auth.getSession();
@@ -37,7 +64,6 @@ async function checkSession() {
       loadAppData();
       setupRealtime(); 
       
-      // NEW: Request system notification permission
       if (Notification.permission === 'default') {
         Notification.requestPermission();
       }
@@ -58,35 +84,107 @@ document.getElementById('logout-btn').addEventListener('click', async () => {
   location.reload();
 });
 
-// --- REALTIME SYNC ---
+// --- REALTIME & NOTIFICATION ENGINE ---
 function setupRealtime() {
-  supabase.channel('custom-all-channel')
-    .on('postgres_changes', { event: '*', schema: 'public', table: 'tasks' }, fetchTasks)
+  const channel = supabase.channel('fieldhub-sync');
+  
+  // NEW: Flag to track if the initial burst of online users has finished loading
+  let presenceInitialized = false; 
+
+  // 1. Listen for Database Changes
+  channel
     .on('postgres_changes', { event: '*', schema: 'public', table: 'projects' }, fetchProjects)
     
-    // UPDATED: Intercept the message payload
-    .on('postgres_changes', { event: '*', schema: 'public', table: 'messages' }, (payload) => {
-      // 1. Refresh the UI chat log as normal
+    // Intercept Messages
+    .on('postgres_changes', { event: 'INSERT', schema: 'public', table: 'messages' }, (payload) => {
       fetchMessages();
-      
-      // 2. If it's a brand new INSERT and notifications are allowed
-      if (payload.eventType === 'INSERT' && Notification.permission === 'granted') {
-        const newMsg = payload.new;
-        
-        // 3. Block notifications for messages you wrote yourself
-        if (newMsg.user_id !== currentUser.id) {
-          
-          // Trigger the native system notification
-          new Notification("FieldHub Project Update", {
-            body: newMsg.content,
-            icon: "https://fieldhub.uk/assets/images/favicon-transparent.png",
-            tag: "fieldhub-chat" // Prevents spamming multiple cards on screen
-          });
-          
-        }
+      if (payload.new.user_id !== currentUser.id && notifPrefs.newMsg && Notification.permission === 'granted') {
+        new Notification("New Message", { 
+          body: payload.new.content, 
+          icon: "https://fieldhub.uk/assets/images/favicon-transparent.png",
+          tag: "fieldhub-chat" 
+        });
       }
     })
-    .subscribe();
+
+    // Intercept Tasks
+
+    // Intercept Tasks
+    .on('postgres_changes', { event: '*', schema: 'public', table: 'tasks' }, async (payload) => {
+      await fetchTasks();
+      
+      if (Notification.permission !== 'granted') return;
+
+      const isMine = payload.new?.user_id === currentUser.id || payload.old?.user_id === currentUser.id;
+
+      if (payload.eventType === 'INSERT') {
+        if (isMine) return; // Don't notify the creator
+
+        const creatorName = allProfiles.find(p => p.id === payload.new.user_id)?.full_name || 'A teammate';
+        
+        unseenTaskIds.add(payload.new.id);
+        renderTasks(); 
+        
+        if (notifPrefs.newTask) {
+          if (payload.new.is_group_task) {
+            new Notification("Task Update!", { body: `${creatorName} has just assigned you to a group task: ${payload.new.title}`, icon: "https://fieldhub.uk/assets/images/favicon-transparent.png" });
+          } else if (payload.new.assigned_to === currentUser.id) {
+            new Notification("Task Update!", { body: `${creatorName} has just assigned you a task: ${payload.new.title}`, icon: "https://fieldhub.uk/assets/images/favicon-transparent.png" });
+          } else {
+            new Notification("New Task Added", { body: payload.new.title });
+          }
+        }
+      }
+      
+      if (payload.eventType === 'UPDATE' && !isMine) {
+        if (payload.new.assigned_to === currentUser.id && notifPrefs.statusTask) {
+           const editorName = allProfiles.find(p => p.id === payload.new.user_id)?.full_name || 'A teammate';
+           new Notification("Task Update!", { body: `${editorName} has just updated one of your tasks: ${payload.new.title}`, icon: "https://fieldhub.uk/assets/images/favicon-transparent.png" });
+        } else if (payload.old.status !== payload.new.status && notifPrefs.statusTask) {
+           const action = payload.new.status === 'completed' ? "Completed" : "Reinstated";
+           new Notification(`Task ${action}`, { body: payload.new.title });
+        }
+      }
+
+      if (payload.eventType === 'DELETE' && notifPrefs.delTask && !isMine) {
+        new Notification("Task Deleted", { body: "A task was removed from the board." });
+      }
+    })
+
+    // 2. Listen for Presence (User Logins)
+    .on('presence', { event: 'join' }, ({ newPresences }) => {
+      if (notifPrefs.login && Notification.permission === 'granted') {
+        const myName = currentUserProfile?.full_name || currentUser.user_metadata?.full_name || "A Teammate";
+        
+        newPresences.forEach(userState => {
+          if (userState.user_name && userState.user_name !== myName) {
+             
+             // Check the flag to determine the correct phrasing
+             const actionText = presenceInitialized ? "just logged in. 👨‍💻" : "is online. 🌐";
+             
+             new Notification("Teammate Status", { 
+                 body: `${userState.user_name} ${actionText}` 
+             });
+          }
+        });
+      }
+    })
+    .subscribe(async (status) => {
+      if (status === 'SUBSCRIBED') {
+        
+        const broadcastName = currentUserProfile?.full_name || currentUser.user_metadata?.full_name || "A Teammate";
+        
+        await channel.track({ 
+          user_name: broadcastName,
+          online_at: new Date().toISOString() 
+        });
+
+        // After connecting, wait 1 second for the initial room data to process, then flip the flag
+        setTimeout(() => {
+            presenceInitialized = true;
+        }, 1000);
+      }
+    });
 }
 
 // --- FETCH DATA ---
@@ -128,17 +226,27 @@ async function fetchCategories() {
 async function fetchProfiles() {
   const { data } = await supabase.from('profiles').select('*');
   if (data) {
+    allProfiles = data; // Cache profiles for instant name lookups
+
     const options = data.map(p => `<option value="${p.id}">${p.full_name}</option>`).join('');
     document.getElementById('assignee-select').innerHTML = '<option value="">Unassigned</option><option value="ALL">Group Task (All)</option>' + options;
     document.getElementById('filter-user-all').innerHTML = '<option value="All">All Users</option>' + options;
     
-    // Load Default Startup Project
     currentUserProfile = data.find(p => p.id === currentUser.id);
     if (currentUserProfile && currentUserProfile.default_project && activeGlobalProjectId === 'all') {
         activeGlobalProjectId = currentUserProfile.default_project;
         document.getElementById('global-project-select').value = activeGlobalProjectId;
     }
   }
+}
+
+async function sendSystemMessage(projectId, content) {
+  if (!projectId || projectId === 'all') return;
+  await supabase.from('messages').insert([{
+      project_id: projectId,
+      user_id: currentUser.id,
+      content: content
+  }]);
 }
 
 async function fetchTasks() {
@@ -296,6 +404,9 @@ document.getElementById('add-task-btn').addEventListener('click', async () => {
   const title = document.getElementById('new-task-input').value.trim();
   const assigneeVal = document.getElementById('assignee-select').value;
   const projectId = document.getElementById('task-project-select').value;
+  const myName = currentUserProfile?.full_name || 'A teammate';
+  const assigneeText = assigneeVal === 'ALL' ? 'everyone' : (allProfiles.find(p => p.id === assigneeVal)?.full_name || 'unassigned');
+
   if (!title || !projectId) return alert("Title and Project are required.");
 
   document.getElementById('add-task-btn').textContent = "Saving...";
@@ -313,6 +424,7 @@ document.getElementById('add-task-btn').addEventListener('click', async () => {
 
   if (editingTaskId) {
     await supabase.from('tasks').update(payload).eq('id', editingTaskId);
+    sendSystemMessage(payload.project_id, `Automated Update: ${myName} has just updated the task: "${payload.title}".`);
   } else {
     payload.user_id = currentUser.id;
     const { data } = await supabase.from('tasks').insert([payload]).select();
@@ -320,6 +432,7 @@ document.getElementById('add-task-btn').addEventListener('click', async () => {
         newlyAddedTaskId = data[0].id;
         targetTaskId = data[0].id;
     }
+    sendSystemMessage(payload.project_id, `Automated Update: ${myName} has set a task: "${payload.title}" for ${assigneeText}. It is ${payload.priority} priority.`);
   }
 
   if (pendingFiles.length > 0 && targetTaskId) {
@@ -364,11 +477,16 @@ window.deleteTask = async (id) => {
     if (isAnimating) return;
     isAnimating = true;
 
+    // Define the variables so the system message doesn't crash
+    const task = allTasksData.find(t => t.id === id);
+    const myName = currentUserProfile?.full_name || 'A teammate';
+
     const myEl = document.getElementById(`my-task-${id}`);
     const allEl = document.getElementById(`all-task-${id}`);
     const activeElements = [myEl, allEl].filter(el => el !== null);
 
     activeElements.forEach(el => el.classList.add('anim-slide-out'));
+    sendSystemMessage(task.project_id, `Automated Update: ${myName} has deleted the task: "${task.title}".`);
 
     setTimeout(async () => {
       await supabase.from('tasks').delete().eq('id', id);
@@ -513,7 +631,9 @@ function renderTasks() {
 
   document.getElementById('my-task-list').innerHTML = buildHTML(myTasks, 'my');
   document.getElementById('all-task-list').innerHTML = buildHTML(allTasks, 'all');
-
+    document.querySelectorAll('.unseen-task').forEach(el => {
+    viewportObserver.observe(el);
+    });
   newlyAddedTaskId = null;
   triggerSlideInAllCompleted = false;
 }
@@ -560,7 +680,7 @@ function buildHTML(tasks, prefix) {
         : '';
 
     return `
-      <div class="task-item ${isCompleted ? 'completed' : ''} ${animClass}" id="${prefix}-task-${t.id}">
+      <div class="task-item ${isCompleted ? 'completed' : ''} ${animClass} ${unseenTaskIds.has(t.id) ? 'unseen-task' : ''}" id="${prefix}-task-${t.id}">
         <div class="task-header" style="display: flex; justify-content: space-between; align-items: flex-start; width: 100%;">
           
           <div style="display:flex; flex-direction:column; flex:1;">
@@ -593,9 +713,13 @@ function buildHTML(tasks, prefix) {
 // --- ANIMATED STATUS UPDATE ---
 window.toggleTaskStatus = async (id, currentStatus, checkboxEl) => {
   if (isAnimating) {
-    if (checkboxEl) checkboxEl.checked = !checkboxEl.checked; // Revert click if blocked
+    if (checkboxEl) checkboxEl.checked = !checkboxEl.checked; 
     return;
   }
+  
+  // Define the variables so the system message doesn't crash
+  const task = allTasksData.find(t => t.id === id);
+  const myName = currentUserProfile?.full_name || 'A teammate';
   
   const myEl = document.getElementById(`my-task-${id}`);
   const allEl = document.getElementById(`all-task-${id}`);
@@ -603,6 +727,9 @@ window.toggleTaskStatus = async (id, currentStatus, checkboxEl) => {
 
   if (currentStatus === 'pending') {
     isAnimating = true;
+
+    sendSystemMessage(task.project_id, `Automated Update - Completed Task: ${myName} has just completed "${task.title}". Go team!`);
+
     if (hideCompleted) {
       activeElements.forEach(el => el.classList.add('anim-slide-out')); 
       setTimeout(async () => {
@@ -700,7 +827,15 @@ document.getElementById('update-profile-btn').addEventListener('click', async ()
   const profileUpdate = { full_name: newName };
   profileUpdate.default_project = newDefaultProject === 'all' ? null : newDefaultProject;
   
+  // 1. Update the public Profiles table (for the app UI)
   const { error: profileError } = await supabase.from('profiles').update(profileUpdate).eq('id', currentUser.id);
+  
+  // 2. Update the core Supabase Auth metadata (for the dashboard "Display Name")
+  if (newName) {
+    await supabase.auth.updateUser({
+      data: { full_name: newName }
+    });
+  }
   
   if (profileError) {
     msgEl.style.color = "var(--danger)";
@@ -714,6 +849,44 @@ document.getElementById('update-profile-btn').addEventListener('click', async ()
       fetchTasks();
     }, 2000);
   }
+});
+
+
+// --- NOTIFICATION SETTINGS LOGIC ---
+document.getElementById('open-settings-btn').addEventListener('click', () => {
+  // Existing Profile data loading...
+  if (currentUserProfile) {
+    document.getElementById('settings-name-input').value = currentUserProfile.full_name || '';
+    document.getElementById('settings-default-project').value = currentUserProfile.default_project || 'all';
+  }
+  
+  // Load Notification Checkboxes
+  document.getElementById('notif-new-task').checked = notifPrefs.newTask;
+  document.getElementById('notif-del-task').checked = notifPrefs.delTask;
+  document.getElementById('notif-status-task').checked = notifPrefs.statusTask;
+  document.getElementById('notif-msg').checked = notifPrefs.newMsg;
+  document.getElementById('notif-login').checked = notifPrefs.login;
+  
+  openModal('settings-modal');
+});
+
+document.getElementById('save-notifs-btn').addEventListener('click', () => {
+  // Request permission if they are turning things on for the first time
+  if (Notification.permission === 'default') Notification.requestPermission();
+
+  notifPrefs = {
+    newTask: document.getElementById('notif-new-task').checked,
+    delTask: document.getElementById('notif-del-task').checked,
+    statusTask: document.getElementById('notif-status-task').checked,
+    newMsg: document.getElementById('notif-msg').checked,
+    login: document.getElementById('notif-login').checked
+  };
+
+  localStorage.setItem('fieldhub_notifs', JSON.stringify(notifPrefs));
+  
+  const msgEl = document.getElementById('notif-msg-text');
+  msgEl.textContent = "Preferences saved for this device.";
+  setTimeout(() => msgEl.textContent = '', 2000);
 });
 
 const newPwInput = document.getElementById('new-password');

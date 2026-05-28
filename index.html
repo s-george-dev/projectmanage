@@ -90,6 +90,15 @@
       transform: translateX(5px); 
       font-weight: bold;
     }
+
+    /* Unseen Task Pulse */
+    @keyframes pulseUnseen { 
+      0% { box-shadow: 0 0 0px var(--success); border-color: var(--border-color); } 
+      50% { box-shadow: 0 0 15px var(--success); border-color: var(--success); } 
+      100% { box-shadow: 0 0 0px var(--success); border-color: var(--border-color); } 
+    }
+    .unseen-task { animation: pulseUnseen 2s infinite; }
+
   </style>
 </head>
 <body>
@@ -223,6 +232,8 @@
       <span class="close-x" onclick="closeModal('settings-modal')">&times;</span>
       <h3 style="margin-top:0;">Account Settings</h3>
       
+      <!-- Profile Settings -->
+      
       <div style="background: var(--surface-light); padding: 15px; border-radius: 8px; border: 1px solid var(--border-color); margin-bottom: 20px;">
         <h4 style="margin-top:0; margin-bottom: 15px;">Profile Settings</h4>
         
@@ -235,6 +246,35 @@
         <button id="update-profile-btn" style="width: 100%;">Save Profile</button>
         <p id="profile-msg" style="text-align: center; font-size: 14px; margin-top: 10px; margin-bottom: 0; height: 15px;"></p>
       </div>
+
+      <!-- Notification Preferences -->
+
+      <div style="background: var(--surface-light); padding: 15px; border-radius: 8px; border: 1px solid var(--border-color); margin-bottom: 20px;">
+        <h4 style="margin-top:0; margin-bottom: 15px;">Device Notifications</h4>
+        
+        <div style="display: flex; flex-direction: column; gap: 10px; font-size: 14px; color: var(--text-main);">
+          <label style="display: flex; align-items: center; gap: 10px; cursor: pointer;">
+            <input type="checkbox" id="notif-new-task"> New Tasks Added
+          </label>
+          <label style="display: flex; align-items: center; gap: 10px; cursor: pointer;">
+            <input type="checkbox" id="notif-del-task"> Tasks Deleted
+          </label>
+          <label style="display: flex; align-items: center; gap: 10px; cursor: pointer;">
+            <input type="checkbox" id="notif-status-task"> Tasks Completed/Reinstated
+          </label>
+          <label style="display: flex; align-items: center; gap: 10px; cursor: pointer;">
+            <input type="checkbox" id="notif-msg"> New Chat Messages
+          </label>
+          <label style="display: flex; align-items: center; gap: 10px; cursor: pointer;">
+            <input type="checkbox" id="notif-login"> Teammate Logs In
+          </label>
+        </div>
+        
+        <button id="save-notifs-btn" class="secondary-btn" style="width: 100%; margin-top: 15px;">Save Preferences</button>
+        <p id="notif-msg-text" style="text-align: center; font-size: 14px; margin-top: 10px; margin-bottom: 0; height: 15px; color: var(--success);"></p>
+      </div>
+
+      <!-- Password Update Section -->
 
       <div style="background: var(--surface-light); padding: 15px; border-radius: 8px; border: 1px solid var(--border-color);">
         <h4 style="margin-top:0; margin-bottom: 15px;">Update Password</h4>
@@ -257,6 +297,50 @@
       </div>
     </div>
   </div>
+
+
+<template>
+  <div id="app">
+    
+    <LoginScreen v-if="!session" />
+
+    <div v-else class="dashboard">
+      <h1>You are logged in!</h1>
+      <button @click="logout">Sign Out</button>
+    </div>
+
+  </div>
+</template>
+
+<script type="module">
+  // Import Supabase directly from a CDN (like jsDelivr)
+  import { createClient } from 'https://cdn.jsdelivr.net/npm/@supabase/supabase-js/+esm'
+
+  // Initialize the client
+  const supabaseUrl = 'https://hwuyvatkyyxfnyzxrcsm.supabase.co'
+  const supabaseKey = 'sb_publishable_4opExcpgvIsblEQjDfqB3A_VMlCVNdG'
+  const supabase = createClient(supabaseUrl, supabaseKey)
+
+  // Attach your function to the global window object so your HTML buttons can use it
+  window.signInWithGoogle = async function() {
+    const { data, error } = await supabase.auth.signInWithOAuth({
+      provider: 'google',
+      options: {
+        queryParams: {
+          access_type: 'offline',
+          prompt: 'consent',
+        },
+      },
+    })
+    
+    if (error) console.error("Error signing in:", error.message)
+  }
+</script>
+
+<button onclick="signInWithGoogle()">Sign in with Google</button>
+
+
+
 
   <script type="module" src="/main.js"></script>
 </body>
